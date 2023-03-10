@@ -43,9 +43,9 @@ namespace Infinite_module_test
         public class tag {
             // load tag outputs
             public bool Initialized = false;
-            tagdata_struct? root = null;
+            public tagdata_struct? root = null;
             XmlDocument reference_xml;
-            XmlNode reference_root;
+            public XmlNode reference_root;
             //
             private T read_and_convert_to<T>(int read_length) {
                 byte[] bytes = new byte[read_length];
@@ -185,11 +185,11 @@ namespace Infinite_module_test
                 Initialized = true;
                 return true;
             }
-            private class tagdata_struct
+            public class tagdata_struct
             {
                 public List<thing> blocks = new();
             }
-            private struct thing
+            public struct thing
             {
                 // GUID needed, as we'll use that to figure out which struct to reference when interpretting the byte array
                 public string GUID;
@@ -220,7 +220,7 @@ namespace Infinite_module_test
                 {
                     var test = new thing();
                     test.GUID = GUID;
-                    test.tag_data = tag_datas.Skip(referenced_array_size * i).Take(referenced_array_size).ToArray();
+                    test.tag_data = tag_datas.Skip((int)struct_file_offset.Offset + (referenced_array_size * i)).Take(referenced_array_size).ToArray();
                     test.tag_block_refs = new();
                     test.tag_resource_refs = new();
 
