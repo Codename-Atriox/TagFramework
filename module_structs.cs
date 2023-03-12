@@ -44,9 +44,9 @@ namespace Infinite_module_test
             // load tag outputs
             public bool Initialized = false;
             public tagdata_struct? root = null;
-            XmlDocument reference_xml;
             public XmlNode reference_root;
             //
+            XmlDocument reference_xml;
             private T read_and_convert_to<T>(int read_length) {
                 byte[] bytes = new byte[read_length];
                 tag_reader.Read(bytes, 0, read_length);
@@ -187,12 +187,12 @@ namespace Infinite_module_test
             }
             public class tagdata_struct
             {
+                // GUID needed, as we'll use that to figure out which struct to reference when interpretting the byte array
+                public string GUID;
                 public List<thing> blocks = new();
             }
             public struct thing
             {
-                // GUID needed, as we'll use that to figure out which struct to reference when interpretting the byte array
-                public string GUID;
                 // array of the struct bytes
                 public byte[] tag_data;
                 // offset, tagblock instance
@@ -203,6 +203,7 @@ namespace Infinite_module_test
             private tagdata_struct? process_highlevel_struct(uint struct_index, string GUID, int block_count = 1)
             {
                 tagdata_struct output_struct = new();
+                output_struct.GUID = GUID;
                 // test if this struct is null, nothing needs to be read if it is
                 if (tag_structs[struct_index].TargetIndex == -1) return output_struct;
 
@@ -219,7 +220,6 @@ namespace Infinite_module_test
                 for (int i = 0; i < block_count; i++)
                 {
                     var test = new thing();
-                    test.GUID = GUID;
                     test.tag_data = tag_datas.Skip((int)struct_file_offset.Offset + (referenced_array_size * i)).Take(referenced_array_size).ToArray();
                     test.tag_block_refs = new();
                     test.tag_resource_refs = new();
