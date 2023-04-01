@@ -1,4 +1,5 @@
 ﻿
+using System.Collections;
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -41,12 +42,24 @@ namespace Infinite_module_test
         //                            
         // currently having this as a class, so that we can just copy pointers to this structure for effiency
         public class tag {
+            public tag(string _plugin_path, List<KeyValuePair<string, bool>>? resources, XmlNode _reference_root = null)
+            {
+                resource_list = resources;
+                reference_root = _reference_root;
+
+                plugin_path = _plugin_path;
+            }
             // load tag outputs
             public bool Initialized = false;
             public tagdata_struct? root = null;
             public XmlNode reference_root;
             //
+            string plugin_path;
+            //
             XmlDocument reference_xml;
+            // resource path, is whole file
+            List<KeyValuePair<string, bool>> resource_list;
+            int processed_resource_index = 0; // we use this to keep track of which files we've opened
             private T read_and_convert_to<T>(int read_length) {
                 byte[] bytes = new byte[read_length];
                 tag_reader.Read(bytes, 0, read_length);
@@ -65,7 +78,7 @@ namespace Infinite_module_test
                 return bytes;
             }
             FileStream? tag_reader; // to be cleaned up after loading
-            public bool Load_tag_file(string tag_path, string plugin_path) {
+            public bool Load_tag_file(string tag_path, string target_guid = "") {
                 if (!File.Exists(tag_path)) return false; // failed via invalid directory
                 tag_reader = new FileStream(tag_path, FileMode.Open, FileAccess.Read);
                 // read the first 4 bytes to make sure this is a tag file
@@ -86,16 +99,23 @@ namespace Infinite_module_test
                 // initialize each element in the array
                 for (int i = 0; i < tag_structs.Length; i++) struct_links[i] = new();
                 // write an array of data block's parent structs, so that we may find a structs parent through the block it resides inside of
-                uint[] block_to_struct_links = new uint[data_blocks.Length];
-                for (uint i = 0; i < tag_structs.Length; i ++){
-                    if (tag_structs[i].TargetIndex == -1) continue;
-                    // if (block_to_struct_links[tag_structs[i].TargetIndex] != 0) // not found to occur, however untested on more than a single tag
-                    block_to_struct_links[tag_structs[i].TargetIndex] = i;
+                int[] block_to_struct_links = new int[data_blocks.Length];
+
+                for (uint i = 0; i < block_to_struct_links.Length; i++) block_to_struct_links[i] = -1; // placeholdewr until we hfigure out how to do this normally
+
+                for (uint i = 0; i < tag_structs.Length; i++) {
+                    if (tag_structs[i].TargetIndex == -1 || tag_structs[i].Type == 2 || tag_structs[i].Type == 4) continue; // either a null struct or is a resource struct
+                    // FU joe halo, why are some of your tags poorly formatted, where tags structs can have the same target index
+                    if (block_to_struct_links[tag_structs[i].TargetIndex] != -1) continue; // FAILSAFE
+
+                    block_to_struct_links[tag_structs[i].TargetIndex] = (int)i;
                 }
                 // assign the child structs links, based on their parent field block
-                for (uint i = 0; i < tag_structs.Length; i++){
-                    if (tag_structs[i].Type == 0) continue; // the root struct has no parent
-                    struct_links[block_to_struct_links[tag_structs[i].FieldBlock]].Add(tag_structs[i].FieldOffset, i);
+                for (uint i = 0; i < tag_structs.Length; i++) {
+                    if (tag_structs[i].Type == 0 || tag_structs[i].Type == 4) continue; // the root struct has no parent, AND TYPE 4'S OVERLAP WITH OTHER PARAMS??
+                    var ven = block_to_struct_links[tag_structs[i].FieldBlock];
+                    var ben = struct_links[ven];
+                    ben.Add(tag_structs[i].FieldOffset, i);
                 }
                 // read tag data references?
                 data_references = struct_array_assign_bytes<data_reference>(header.DataReferenceCount, data_reference_size);
@@ -107,6 +127,8 @@ namespace Infinite_module_test
                 {
                     data_links[data_references[i].ParentStructIndex].Add(data_references[i].FieldOffset, i);
                 }
+
+                // TAG STRUCTS ALSO REFER TO RESOURCE FILE STRUCTS!!!!!!!!!!!!!
 
                 // read tag tag fixup references 
                 tag_fixup_references = struct_array_assign_bytes<tag_fixup_reference>(header.TagReferenceCount, tag_fixup_reference_size);
@@ -153,32 +175,40 @@ namespace Infinite_module_test
 
 
                 // loop through all of the structs until we find the one that is the main struct (type == 0)
-                for (uint i = 0; i < tag_structs.Length; i++) {
-                    if (tag_structs[i].Type == 0) {
-                        // because of how this system works, we need to find the GUID first, to figure out what plugin file to use
-                        // realistically, we could rename the plugins as their guid value, but that wouldn't be very cool for the people just looking through the files (aka not user friendly)
-                        string root_GUID = tag_structs[i].GUID_1.ToString("X16") + tag_structs[i].GUID_2.ToString("X16");
-                        string plugin_guide_path = plugin_path + "\\GUIDs.txt";
-                        string tagus_groupus = "";
-                        using (StreamReader reader = File.OpenText(plugin_guide_path)) {
-                            while (!reader.EndOfStream) {
-                                string[] line = reader.ReadLine().Split(":");
-                                if (line[1] == root_GUID) {
-                                    tagus_groupus = line[0];
-                                    break;
-                                } } }
+                if (reference_root == null){
+                    for (uint i = 0; i < tag_structs.Length; i++){
+                        if (tag_structs[i].Type == 0) {
+                            // because of how this system works, we need to find the GUID first, to figure out what plugin file to use
+                            // realistically, we could rename the plugins as their guid value, but that wouldn't be very cool for the people just looking through the files (aka not user friendly)
+                            string root_GUID = tag_structs[i].GUID_1.ToString("X16") + tag_structs[i].GUID_2.ToString("X16");
+                            string plugin_guide_path = plugin_path + "\\GUIDs.txt";
+                            string tagus_groupus = "";
+                            using (StreamReader reader = File.OpenText(plugin_guide_path)){
+                                while (!reader.EndOfStream) {
+                                    string[] line = reader.ReadLine().Split(":");
+                                    if (line[1] == root_GUID) {
+                                        tagus_groupus = line[0];
+                                        break;
+                            }}}
 
 
-                        // setup reference plugin file
-                        reference_xml = new XmlDocument();
-                        reference_xml.Load(plugin_path + "\\" + tagus_groupus + ".xml");
-                        reference_root = reference_xml.SelectSingleNode("root");
+                            // setup reference plugin file
+                            reference_xml = new XmlDocument();
+                            reference_xml.Load(plugin_path + "\\" + tagus_groupus + ".xml");
+                            //boingo zoingo; // add error handling here or something
+                            reference_root = reference_xml.SelectSingleNode("root");
 
 
-                        root = process_highlevel_struct(i, root_GUID);
-                        break;
-                }}
-
+                            root = process_highlevel_struct(i, root_GUID);
+                            break;
+                }}}else{ // is a subtag
+                    // reference_xml = inherited;
+                    // reference_root = inherited;
+                    for (uint i = 0; i < tag_structs.Length; i++){
+                        if (tag_structs[i].Type == 0){
+                            root = process_highlevel_struct(i, target_guid);
+                            break;
+                }}}
 
 
 
@@ -199,6 +229,9 @@ namespace Infinite_module_test
                 public Dictionary<ulong, tagdata_struct> tag_block_refs;
                 // offset, resource data
                 public Dictionary<ulong, byte[]> tag_resource_refs;
+                // we should also have the tag ref dictionaries
+                // offset, resourfce file instance
+                public Dictionary<ulong, tagdata_struct> resource_file_refs;
             }
             private tagdata_struct? process_highlevel_struct(uint struct_index, string GUID, int block_count = 1)
             {
@@ -223,10 +256,11 @@ namespace Infinite_module_test
                     test.tag_data = tag_datas.Skip((int)struct_file_offset.Offset + (referenced_array_size * i)).Take(referenced_array_size).ToArray();
                     test.tag_block_refs = new();
                     test.tag_resource_refs = new();
+                    test.resource_file_refs = new();
 
                     // WE NEED TO DO THE OFFSET, BECAUSE TAGBLOCKS ARE STORED IN THE SAME TAGDATA REGION
                     // ELSE ALL THE TAGBLOCKS WILL HAVE THE SAME CONTENTS (or same counts)
-                    process_literal_struct(currentStruct, struct_index, ref test, (ulong)(referenced_array_size * i));
+                    process_literal_struct(currentStruct, struct_index, ref test, (ulong)(referenced_array_size * i), 0);
 
                     output_struct.blocks.Add(test);
                 }
@@ -246,7 +280,7 @@ namespace Infinite_module_test
                 else if (section == 3) return BitConverter.ToInt32(actual_tag_resource, offset);
                 else return -1; // we should never hit this block
             }
-            private void process_literal_struct(XmlNode structparent, uint struct_index, ref thing append_to, ulong current_offset = 0)
+            private void process_literal_struct(XmlNode structparent, uint struct_index, ref thing append_to, ulong current_offset, ulong fixed_offset)
             {
 
 
@@ -260,8 +294,9 @@ namespace Infinite_module_test
                      && currentParam.Name != "_43")
                         continue;
 
-
-                    ulong relative_offset = (ulong)Convert.ToInt32(currentParam.Attributes["Offset"].Value, 16) + current_offset;
+                    ulong relative_offset = (ulong)Convert.ToInt32(currentParam.Attributes["Offset"].Value, 16);
+                    ulong data_block_offset = relative_offset + current_offset;
+                    ulong tagblock_constant_offset = relative_offset + fixed_offset;
 
                     // write the node, then write attributes
                     switch (currentParam.Name)
@@ -270,7 +305,7 @@ namespace Infinite_module_test
                             { // _field_struct - 0byte
                                 string xml_guid = "_" + currentParam.Attributes["GUID"].Value;
                                 XmlNode struct_node = reference_root.SelectSingleNode(xml_guid);
-                                process_literal_struct(struct_node, struct_index, ref append_to, relative_offset);
+                                process_literal_struct(struct_node, struct_index, ref append_to, data_block_offset, tagblock_constant_offset);
                             }
                             break;
                         case "_39":
@@ -279,40 +314,75 @@ namespace Infinite_module_test
                                 int array_count = Convert.ToInt32(currentParam.Attributes["Count"].Value);
                                 XmlNode struct_node = reference_root.SelectSingleNode(xml_guid);
                                 int referenced_array_size = Convert.ToInt32(struct_node.Attributes["Size"].Value);
-                                for (int array_ind = 0; array_ind < array_count; array_ind++)
-                                    process_literal_struct(struct_node, struct_index, ref append_to, relative_offset + (ulong)(referenced_array_size * array_ind));
-                            }
+                                for (int array_ind = 0; array_ind < array_count; array_ind++){
+                                    ulong next_offset = data_block_offset + (ulong)(referenced_array_size * array_ind);
+                                    ulong next_fixed_offset = tagblock_constant_offset + (ulong)(referenced_array_size * array_ind);
+                                    process_literal_struct(struct_node, struct_index, ref append_to, next_offset, next_fixed_offset);
+                            }}
                             break;
                         case "_40":
                             { // _field_tag_block - 20byte
                               // read the count
                               // find the struct that this is referring to
                                 string struct_guid = currentParam.Attributes["GUID"].Value;
-                                ulong param_offset = relative_offset + data_blocks[tag_structs[struct_index].TargetIndex].Offset;
+                                ulong param_offset = data_block_offset + data_blocks[tag_structs[struct_index].TargetIndex].Offset;
                                 int tagblock_count = read_int_from_array_at(data_blocks[tag_structs[struct_index].TargetIndex].Section, (int)(param_offset + 16));
-                                uint next_struct_index = struct_links[struct_index][(uint)relative_offset];
+                                uint next_struct_index = struct_links[struct_index][(uint)data_block_offset];
                                 //tag_def_structure next_struct = tag_structs[];
-                                append_to.tag_block_refs.Add(relative_offset, process_highlevel_struct(next_struct_index, struct_guid, tagblock_count));
+                                append_to.tag_block_refs.Add(tagblock_constant_offset, process_highlevel_struct(next_struct_index, struct_guid, tagblock_count));
                             }
                             break;
                         // we should also do one of these arry dictionary thingos for tag references _41
                         case "_42": // _field_data - 24byte
                             {   // for this, you're supposed to find the corresponding 'data_references' index, which will tell us which data block to read via the 'target_index'
                                 // wow thats way too many steps
-                                uint data_ref_index = data_links[struct_index][(uint)relative_offset];
+                                uint data_ref_index = data_links[struct_index][(uint)data_block_offset];
                                 data_reference data_header = data_references[data_ref_index];
                                 if (data_header.TargetIndex != -1)
                                 {
                                     data_block data_data = data_blocks[data_header.TargetIndex];
                                     byte[] data_bytes = return_referenced_byte_segment(data_data.Section).Skip((int)data_data.Offset).Take((int)data_data.Size).ToArray();
-                                    append_to.tag_resource_refs.Add(relative_offset, data_bytes);
+                                    if (data_data.Unk_0x04 != 0)
+                                    {
+
+                                    }
+                                    append_to.tag_resource_refs.Add(tagblock_constant_offset, data_bytes);
                                 }
-                                else append_to.tag_resource_refs.Add(relative_offset, new byte[0]);
+                                else append_to.tag_resource_refs.Add(tagblock_constant_offset, new byte[0]);
                             }
                             break;
                         case "_43": // _field_resource - 16byte
                             // hmm, this section works basically exactly the same as tagblocks, except these refer to files outside of this file
                             {
+
+                                string struct_guid = currentParam.Attributes["GUID"].Value;
+                                ulong param_offset = data_block_offset + data_blocks[tag_structs[struct_index].TargetIndex].Offset;
+                                int resource_type = read_int_from_array_at(data_blocks[tag_structs[struct_index].TargetIndex].Section, (int)(param_offset + 12));
+                                if (resource_type == 0)  // external tag resource type // UNKOWN HOW TO READ AS OF RIGHT NOW
+                                {
+                                    //uint resource_struct_index = struct_links[struct_index][(uint)data_block_offset];
+                                    //tag_def_structure test = tag_structs[resource_struct_index];
+                                    //data_block data_data = data_blocks[test.TargetIndex];
+                                    //byte[] data_bytes = return_referenced_byte_segment(data_data.Section).Skip((int)data_data.Offset).Take((int)data_data.Size).ToArray();
+                                    //string bitles = BitConverter.ToString(data_bytes).Replace('-', ' ');
+                                    tag child_tag = new(plugin_path, null, reference_root);
+                                    if (resource_list[processed_resource_index].Value == false)
+                                    { // this is an ERROR, 
+
+                                    }
+                                    if (!child_tag.Load_tag_file(resource_list[processed_resource_index].Key, struct_guid))
+                                    { // also an error
+
+                                    }
+                                    append_to.resource_file_refs.Add(tagblock_constant_offset, child_tag.root);
+                                    processed_resource_index++;
+                                }
+                                else // chunked resource type
+                                {
+                                    uint next_struct_index = struct_links[struct_index][(uint)data_block_offset];
+                                    append_to.resource_file_refs.Add(tagblock_constant_offset, process_highlevel_struct(next_struct_index, struct_guid));
+                                }
+
                                 //string struct_guid = currentParam.Attributes["GUID"].Value;
                                 //ulong param_offset = relative_offset + data_blocks[tag_struct.TargetIndex].Offset;
                                 //int tagblock_count = KindaSafe_SuperCast<int>(return_referenced_byte_segment(data_blocks[tag_struct.TargetIndex].Section), param_offset + 16);
@@ -324,17 +394,6 @@ namespace Infinite_module_test
                     }
                 }
             }
-
-
-
-            // this is how we'd access the root entire structure
-            // 
-            // this is how we would request a single parameter
-            // 10
-            // this is how we'd access entire structure of a tagblock
-            // 10:0
-            // this is how we'd access a param from a tagblock
-            // 10:0,10
 
             // not nullable because we are not checking if its not null 100 times
             public tag_header header;
@@ -384,7 +443,7 @@ namespace Infinite_module_test
             [FieldOffset(0x2C)] public uint    StringTableSize; 
                                 
             [FieldOffset(0x30)] public uint    ZoneSetDataSize;    // this is the literal size in bytes
-            [FieldOffset(0x34)] public uint    Unk_0x34; // new with infinite, cold be an enum of how to read the alignment bytes
+            [FieldOffset(0x34)] public uint    Unk_0x34; // new with infinite, cold be an enum of how to read the alignment bytes // seems to be chunked resource file count
                                 
             [FieldOffset(0x38)] public uint    HeaderSize; 
             [FieldOffset(0x3C)] public uint    DataSize; 
@@ -428,7 +487,7 @@ namespace Infinite_module_test
             [FieldOffset(0x00)] public long   GUID_1;
             [FieldOffset(0x08)] public long   GUID_2;
                                 
-            [FieldOffset(0x10)] public ushort  Type;           // "0 = Main Struct, 1 = Tag Block, 2 = Resource, 3 = Custom"
+            [FieldOffset(0x10)] public ushort  Type;           // "0 = Main Struct, 1 = Tag Block, 2 = Resource, 3 = Custom" NOTE: THERE IS A NUMBER 4, UNKNOWN WHAT ITS PURPOSE IS
             [FieldOffset(0x12)] public ushort  Unk_0x12;       // likely padding
                                 
             [FieldOffset(0x14)] public int     TargetIndex;    // "For Main Struct and Tag Block structs, the index of the block containing the struct. For Resource structs, this (probably) is the index of the resource. This can be -1 if the tag field doesn't point to anything (null Tag Blocks or Custom structs)."
