@@ -25,7 +25,7 @@ namespace Infinite_module_test
     {
         // VERSION 27 // VERSION 27 // VERSION 27 //
         // an interesting thing to note is that version 27 was the version of halo 5 forge
-        // it seems someone on the engine team failed to update this number lol, because this struct has certainly changed since
+        // it seems someone on the engine team failed to update this number, because this struct has certainly changed since
         // or at least its child structs definitely changed
         /////////////// //////////////////////////////////////////////
         // TAG STUFF // //////////////////////////////////////////////
@@ -140,6 +140,7 @@ namespace Infinite_module_test
                 }
                 // read the zoneset header
                 zoneset_info = read_and_convert_to<zoneset_header>(zoneset_header_size);
+                /* // ZONESETS SEEM TO BE NULLED (BD'd) OUT???
                 // read all the zoneset instances
                 zonesets = new zoneset_instance[zoneset_info.ZonesetCount];
                 // its literally not possible for that to be a null reference, we just set it above
@@ -153,6 +154,7 @@ namespace Infinite_module_test
                     // read the parents
                     zonesets[m].zonset_parents = struct_array_assign_bytes<int>(zonesets[m].header.ParentCount, 4);
                 }
+                */
                 // end of header, double check to make sure we read it all correctly // APPARENTLY THERES A LOT OF CASES WITH DATA THAT WE DONT READ !!!!!!!!!!!!!! FU BUNGIE
                 // read tag header data (so we can access any tag data that gets stored at the end)
                 header_data = read_at(0, (int)header.HeaderSize);
