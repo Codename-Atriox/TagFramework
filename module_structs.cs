@@ -315,7 +315,7 @@ namespace Infinite_module_test
                                 string xml_guid = "_" + currentParam.Attributes["GUID"].Value;
                                 int array_count = Convert.ToInt32(currentParam.Attributes["Count"].Value);
                                 XmlNode struct_node = reference_root.SelectSingleNode(xml_guid);
-                                int referenced_array_size = Convert.ToInt32(struct_node.Attributes["Size"].Value);
+                                int referenced_array_size = Convert.ToInt32(struct_node.Attributes["Size"].Value, 16); // WHY ARE THESE STORED IN HEXADECIMAL FORMAT
                                 for (int array_ind = 0; array_ind < array_count; array_ind++){
                                     ulong next_offset = data_block_offset + (ulong)(referenced_array_size * array_ind);
                                     ulong next_fixed_offset = tagblock_constant_offset + (ulong)(referenced_array_size * array_ind);
@@ -367,6 +367,7 @@ namespace Infinite_module_test
                                     //data_block data_data = data_blocks[test.TargetIndex];
                                     //byte[] data_bytes = return_referenced_byte_segment(data_data.Section).Skip((int)data_data.Offset).Take((int)data_data.Size).ToArray();
                                     //string bitles = BitConverter.ToString(data_bytes).Replace('-', ' ');
+                                    
                                     tag child_tag = new(plugin_path, null, reference_root);
                                     if (resource_list[processed_resource_index].Value == false)
                                     { // this is an ERROR, 
