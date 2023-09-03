@@ -157,10 +157,10 @@ namespace Infinite_module_test{
 
                 return decompressed_data;
             }
-            public byte[] get_tag_bytes(uint tag_index){ // kinda redundant
+            public byte[] get_tag_bytes(int tag_index){ // kinda redundant
                 return get_module_file_bytes(files[tag_index]);
             }
-            public List<byte[]> get_tag_resource_list(uint tag_index){
+            public List<byte[]> get_tag_resource_list(int tag_index){
                 // get all resources & then read them into a list
                 List<byte[]> output = new();
                 module_file tag = files[tag_index];
