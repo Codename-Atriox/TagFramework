@@ -18,6 +18,7 @@ namespace Infinite_module_test
             ulong data_ptr = *(ulong*)&data;
             if (*(ulong*)(data_ptr + 0x8) == (ulong)data.Length) // 0x08 is the byte count
                 return *(T*)(data_ptr + 0x10); // 0x10 is the start of the actual data
+            throw new Exception("super cast failed, c# version issue?");
             return default(T);
         }
         // DEBUG METHOD // DEBUG METHOD // DEBUG METHOD //
@@ -25,12 +26,14 @@ namespace Infinite_module_test
         {
             ulong data_ptr = *(ulong*)&data;
             if (*(ulong*)(data_ptr + 0x8) != (ulong)data.Length)
-                return default(T);
+                throw new Exception("super cast failed, c# version issue?");
+            //return default(T);
 
             // check to see if theres actually that many bytes in that array to read
             ulong struct_size = (ulong)Marshal.SizeOf(typeof(T));
             if (startIndex + struct_size > (ulong)data.Length)
-                return default(T);
+                throw new Exception("super cast failed, c# version issue?");
+            //return default(T);
 
             return *(T*)(data_ptr + (0x10 + startIndex));
         }

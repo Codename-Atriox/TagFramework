@@ -21,6 +21,24 @@ using static System.Net.Mime.MediaTypeNames;
 
 namespace Infinite_module_test
 {
+    public static class module_structs
+    {
+        public class module { 
+
+            List<module_category> file_groups = new();
+            struct module_category{
+                public string name;
+                public List<indexed_module_file> files;
+            }
+            struct indexed_module_file{
+                public string name;
+                public int source_file_header_index;
+            }
+
+
+        }
+
+    }
     public static class tag_structs
     {
         // VERSION 27 // VERSION 27 // VERSION 27 //
@@ -42,7 +60,7 @@ namespace Infinite_module_test
         //                            
         // currently having this as a class, so that we can just copy pointers to this structure for effiency
         public class tag {
-            public tag(string _plugin_path, List<KeyValuePair<string, bool>>? resources, XmlNode _reference_root = null)
+            public tag(string _plugin_path, List<KeyValuePair<byte[], bool>>? resources, XmlNode _reference_root = null)
             {
                 resource_list = resources;
                 reference_root = _reference_root;
@@ -58,7 +76,7 @@ namespace Infinite_module_test
             //
             XmlDocument reference_xml;
             // resource path, is whole file
-            List<KeyValuePair<string, bool>> resource_list;
+            List<KeyValuePair<byte[], bool>> resource_list;
             int processed_resource_index = 0; // we use this to keep track of which files we've opened
             private T read_and_convert_to<T>(int read_length) {
                 byte[] bytes = new byte[read_length];
@@ -77,10 +95,10 @@ namespace Infinite_module_test
                 tag_reader.Read(bytes, 0, length);
                 return bytes;
             }
-            FileStream? tag_reader; // to be cleaned up after loading
-            public bool Load_tag_file(string tag_path, string target_guid = "") {
-                if (!File.Exists(tag_path)) return false; // failed via invalid directory
-                tag_reader = new FileStream(tag_path, FileMode.Open, FileAccess.Read);
+            MemoryStream? tag_reader; // to be cleaned up after loading
+            public bool Load_tag_file(byte[] tag_bytes, string target_guid = "") {
+                //if (!File.Exists(tag_path)) return false; // failed via invalid directory
+                tag_reader = new MemoryStream(tag_bytes);
                 // read the first 4 bytes to make sure this is a tag file
                 byte[] header_test = new byte[4];
                 tag_reader.Read(header_test, 0, 4);
