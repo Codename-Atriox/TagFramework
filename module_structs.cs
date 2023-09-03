@@ -12,6 +12,7 @@ using static Infinite_module_test.tag_structs;
 using static System.Collections.Specialized.BitVector32;
 using static System.Net.Mime.MediaTypeNames;
 
+using OodleSharp;
 
 // TODO:
 // 1. separate loading into its own class, so that all data used is easily disposable
@@ -19,26 +20,263 @@ using static System.Net.Mime.MediaTypeNames;
 // 3. tag saving, this will wait until season 3 as there was a few changes that simplify the process, and/or make it more complicated
 
 
-namespace Infinite_module_test
-{
-    public static class module_structs
-    {
-        public class module { 
+namespace Infinite_module_test{
 
-            List<module_category> file_groups = new();
-            struct module_category{
-                public string name;
-                public List<indexed_module_file> files;
-            }
+    public static class module_structs{
+        public class module{
+            // we have to simulate a file structure with modules, so our hierarchy works
+            Dictionary<string, List<indexed_module_file>> file_groups = new();
             struct indexed_module_file{
+                public indexed_module_file(string _name, int source_index, bool resource){
+                    name = _name;
+                    source_file_header_index = source_index;
+                    is_resource = resource;}
                 public string name;
                 public int source_file_header_index;
+                public bool is_resource;
             }
 
+            public module_header module_info;
+            public module_file[] files; // FileCount
+            public byte[] string_table; // current_offset + tag.NameOffset = string* // StringsSize
+            public int[] resource_table; // the function of this array is to index all of the tags that rely on resource things (not blocks), like models i think // ResourceCount
+            public block_header[] blocks; // BlockCount
 
+            string module_file_path; // idk why we'd need to store this
+
+            FileStream module_reader; // so we can read from the module when calling tags
+            long tagdata_base;
+            public module(string module_path){
+                module_file_path = module_path;
+                // and then he said "it's module'n time"
+                if (!File.Exists(module_file_path)) throw new Exception("failed to find specified module file"); // probably redundant
+                
+                using (module_reader = new FileStream(module_file_path, FileMode.Open, FileAccess.Read)){
+                    // read module header
+                    module_info = read_and_convert_to<module_header>(module_header_size);
+
+                    // read module file headers
+                    files = new module_file[module_info.FileCount];
+                    for (int i = 0; i < files.Length; i++)
+                        files[i] = read_and_convert_to<module_file>(module_file_size);
+
+                    // read the string table
+                    string_table = new byte[module_info.StringsSize];
+                    module_reader.Read(string_table, 0, module_info.StringsSize);
+
+                    // read the resource indicies?
+                    resource_table = new int[module_info.ResourceCount];
+                    for (int i = 0; i < resource_table.Length; i++)
+                        resource_table[i] = read_and_convert_to<int>(4); // we should also fix this one too
+
+                    // read the data blocks
+                    blocks = new block_header[module_info.BlockCount];
+                    for (int i = 0; i < blocks.Length; i++)
+                        blocks[i] = read_and_convert_to<block_header>(block_header_size);
+
+                    // now to read the compressed data junk
+
+                    // align accordingly to 0x?????000 padding to read data
+                    tagdata_base = (module_reader.Position / 0x1000 + 1) * 0x1000;
+                    //module_reader.Seek(aligned_address, SeekOrigin.Begin);
+
+                    // then we need to map out our directory, so the tools 
+                    for (int i = 0; i < files.Length; i++){
+                        module_file tag = files[i];
+                        if (tag.ParentIndex != -1){ // resource file
+                            // get parent tag so we can reference that for names
+                            module_file par_tag = files[tag.ParentIndex];
+
+                            // init group if it hasn't been already
+                            string group = groupID_str(par_tag.ClassId);
+                            if (!file_groups.ContainsKey(group))
+                                file_groups.Add(group, new List<indexed_module_file>());
+
+                            // get tag name // names list not implemented yet
+                            string tagname = par_tag.GlobalTagId.ToString("X");
+                            // figure out what index this resource is
+                            int resource_index = -1;
+                            for (int r = 0; r < par_tag.ResourceCount; r++){
+                                if (resource_table[par_tag.ResourceIndex + r] == i){
+                                    resource_index = r;
+                                    break;
+                            }}
+                            tagname += "_res_" + resource_index;
+                            file_groups[group].Add(new(tagname, i, true));
+
+                        }else{ // a rewgular tag file
+                            // init group if it hasn't been already
+                            string group = groupID_str(tag.ClassId);
+                            if (!file_groups.ContainsKey(group))
+                                file_groups.Add(group, new List<indexed_module_file>());
+                            // get tagname and add to directory
+                            string tagname = tag.GlobalTagId.ToString("X");
+                            file_groups[group].Add(new(tagname, i, false));
+                    }}
+                    // ok thats all, the tags have been read
+                }
+            }
+            public byte[] get_module_file_bytes(module_file tag)
+            {
+
+                // read the flags to determine how to process this file
+                bool using_compression = (tag.Flags & flag_UseCompression) != 0; // pretty sure this is true if reading_seperate_blocks is also true, confirmation needed
+                bool reading_separate_blocks = (tag.Flags & flag_UseBlocks) != 0;
+                bool reading_raw_file = (tag.Flags & flag_UseRawfile) != 0;
+
+                byte[] decompressed_data = new byte[tag.TotalUncompressedSize];
+                long data_Address = tagdata_base + tag.get_dataoffset();
+
+                if (reading_separate_blocks){
+                    for (int b = 0; b < tag.BlockCount; b++){
+                        var bloc = blocks[tag.BlockIndex + b];
+                        byte[] block_bytes;
+
+                        if (bloc.Compressed == 1){
+                            module_reader.Seek(data_Address + bloc.CompressedOffset, SeekOrigin.Begin);
+
+                            byte[] bytes = new byte[bloc.CompressedSize];
+                            module_reader.Read(bytes, 0, bytes.Length);
+                            block_bytes = Oodle.Decompress(bytes, bytes.Length, bloc.UncompressedSize);
+                        }else{ // uncompressed
+                            module_reader.Seek(data_Address + bloc.UncompressedOffset, SeekOrigin.Begin);
+
+                            block_bytes = new byte[bloc.UncompressedSize];
+                            module_reader.Read(block_bytes, 0, block_bytes.Length);
+                        }
+                        System.Buffer.BlockCopy(block_bytes, 0, decompressed_data, bloc.UncompressedOffset, block_bytes.Length);
+
+                }}else {  // is the manifest thingo, aka raw file, read data based off compressed and uncompressed length
+                    module_reader.Seek(data_Address, SeekOrigin.Begin);
+                    if (using_compression){
+                        byte[] bytes = new byte[tag.TotalCompressedSize];
+                        module_reader.Read(bytes, 0, bytes.Length);
+                        decompressed_data = Oodle.Decompress(bytes, bytes.Length, tag.TotalUncompressedSize);
+                    } else module_reader.Read(decompressed_data, 0, tag.TotalUncompressedSize);
+                }
+
+                return decompressed_data;
+            }
+            public byte[] get_tag_bytes(uint tag_index){ // kinda redundant
+                return get_module_file_bytes(files[tag_index]);
+            }
+            public List<byte[]> get_tag_resource_list(uint tag_index){
+                // get all resources & then read them into a list
+                List<byte[]> output = new();
+                module_file tag = files[tag_index];
+                for (int i = 0; i < tag.ResourceCount; i++)
+                    output.Add(get_module_file_bytes(files[resource_table[tag.ResourceIndex + i]]));
+                
+                return output;
+            }
+            // helper functions
+            static string groupID_str(int groupid){
+                string result = "";
+                result += (char)((groupid >> 24) & 0xFF);
+                result += (char)((groupid >> 16) & 0xFF);
+                result += (char)((groupid >> 8) & 0xFF);
+                result += (char)(groupid & 0xFF);
+                return result.Trim().Replace('*', '_');
+            }
+            private T read_and_convert_to<T>(int read_length){
+                byte[] bytes = new byte[read_length];
+                module_reader.Read(bytes, 0, read_length);
+                return KindaSafe_SuperCast<T>(bytes);
+            }
         }
 
+        // /////////////////// //
+        // struct definitions //
+        // ///////////////// //
+        public const int module_header_size = 0x50;
+        [StructLayout(LayoutKind.Explicit, Size = module_header_size)]
+        public struct module_header
+        {
+            [FieldOffset(0x00)] public int Head;           //  used to determine if this file is actually a module, should be "mohd"
+            [FieldOffset(0x04)] public int Version;        //  48 flight1, 51 flight2 & retail
+            [FieldOffset(0x08)] public ulong ModuleId;       //  randomized between modules, algo unknown
+            [FieldOffset(0x10)] public int FileCount;      //  the total number of tags contained by the module
+
+            [FieldOffset(0x14)] public int ManifestCount;       //  'FFFFFFFF' "Number of tags in the load manifest (0 if the module doesn't have one, see the "Load Manifest" section below)"
+            [FieldOffset(0x18)] public int Manifest_Unk_0x18;   //  'FFFFFFFF' on blank modules, 0 on non blanks, assumedly this the index of the manifest file in the module files array
+            [FieldOffset(0x1C)] public int Manifest_Unk_0x1C;   //  'FFFFFFFF'
+
+            [FieldOffset(0x20)] public int ResourceIndex;   //  "Index of the first resource entry (numFiles - numResources)"
+            [FieldOffset(0x24)] public int StringsSize;     //  total size (in bytes) of the strings table
+            [FieldOffset(0x28)] public int ResourceCount;   //  number of resource files
+            [FieldOffset(0x2C)] public int BlockCount;      //  number of data blocks
+
+            [FieldOffset(0x30)] public ulong BuildVersion;    // this should be the same between each module
+            [FieldOffset(0x38)] public ulong Checksum;        // "Murmur3_x64_128 of the header (set this field to 0 first), file list, resource list, and block list"
+            // new with infinite
+            [FieldOffset(0x40)] public int Unk_0x040;       //  0
+            [FieldOffset(0x44)] public int Unk_0x044;       //  0
+            [FieldOffset(0x48)] public int Unk_0x048;       //  2
+            [FieldOffset(0x4C)] public int Unk_0x04C;       //  0
+        }
+
+        public const int module_file_size = 0x58;
+        [StructLayout(LayoutKind.Explicit, Size = module_file_size)]
+        public struct module_file
+        {
+            public long get_dataoffset(){
+                return (long)(DataOffset_and_flags & 0x0000FFFFFFFFFFFF);}
+            public ushort get_dataflags(){ // NOTE: only the last 8 bits are actually flags, the other (first) 8 bits are some kind of counter
+                return (ushort)(DataOffset_and_flags >> 48);}
+            [FieldOffset(0x00)] public byte ClassGroup;     //  
+            [FieldOffset(0x01)] public byte Flags;          // refer to flag bits below this struct
+            [FieldOffset(0x02)] public ushort BlockCount;     // "The number of blocks that make up the file. Only valid if the HasBlocks flag is set"
+            [FieldOffset(0x04)] public uint BlockIndex;     // "The index of the first block in the file. Only valid if the HasBlocks flag is set"
+            [FieldOffset(0x08)] public uint ResourceIndex;  // "Index of the first resource in the module's resource list that this file owns"
+
+            [FieldOffset(0x0C)] public int ClassId;        // this is the tag group, should be a string right?
+
+            [FieldOffset(0x10)] public ulong DataOffset_and_flags;     // for now just read as a long // wow we were not infact reading this a long
+            //[FieldOffset(0x14)] public uint    Unk_0x14;       // we will now need to double check each file to make sure if this number is ever anything // its used in the very big files
+
+            [FieldOffset(0x18)] public int TotalCompressedSize;    // "The total size of compressed data."
+            [FieldOffset(0x1C)] public int TotalUncompressedSize;  // "The total size of the data after it is uncompressed. If this is 0, then the file is empty."
+
+            [FieldOffset(0x20)] public int GlobalTagId;   // this is the murmur3 hash; autogenerate from tag path
+
+            [FieldOffset(0x24)] public int UncompressedHeaderSize;
+            [FieldOffset(0x28)] public int UncompressedTagDataSize;
+            [FieldOffset(0x2C)] public int UncompressedResourceDataSize;
+            [FieldOffset(0x30)] public int UncompressedActualResourceDataSize;   // used with bitmaps, and likely other tags idk
+
+            [FieldOffset(0x34)] public byte HeaderAlignment;             // Power of 2 to align the header buffer to (e.g. 4 = align to a multiple of 16 bytes).
+            [FieldOffset(0x35)] public byte TagDataAlightment;           // Power of 2 to align the tag data buffer to.
+            [FieldOffset(0x36)] public byte ResourceDataAligment;        // Power of 2 to align the resource data buffer to.
+            [FieldOffset(0x37)] public byte ActualResourceDataAligment;  // Power of 2 to align the actual resource data buffer to.
+
+            [FieldOffset(0x38)] public uint NameOffset;       // 
+            [FieldOffset(0x3C)] public int ParentIndex;      // "Used with resources to point back to the parent file. -1 = none"
+            [FieldOffset(0x40)] public ulong AssetChecksum;    // "Murmur3_x64_128 hash of (what appears to be) the original file that this file was built from. This is not always the same thing as the file stored in the module. Only verified if the HasBlocks flag is not set."
+            [FieldOffset(0x48)] public ulong AssetId;          // "The asset ID (-1 if not a tag)." maybe other files reference this through its id?
+
+            [FieldOffset(0x50)] public uint ResourceCount;  // "Number of resources this file owns"
+            [FieldOffset(0x54)] public int Unk_0x54;       // so far has just been 0, may relate to hd files?
+        }
+        // 'Flags' // 
+        const byte flag_UseCompression = 0b00000001; // Uses Compression
+        const byte flag_UseBlocks      = 0b00000010; // has blocks, which means to read the data across several data blocks, otherwise read straight from data offset
+        const byte flag_UseRawfile     = 0b00000100; // is a raw file, meaning it has no tag header
+
+        public const int block_header_size = 0x14;
+        [StructLayout(LayoutKind.Explicit, Size = block_header_size)]
+        public struct block_header // sizeof = 0x14
+        {
+            // these SHOULD be uints, however oodle does not like that, so if we get any issues here blame it on oodle
+            // so max decompression size is 2gb, which is unlikely that we'll breach that so this is ok for now
+            [FieldOffset(0x00)] public int CompressedOffset;
+            [FieldOffset(0x04)] public int CompressedSize;
+            [FieldOffset(0x08)] public int UncompressedOffset;
+            [FieldOffset(0x0C)] public int UncompressedSize;
+            [FieldOffset(0x10)] public int Compressed;
+        }
     }
+
+
     public static class tag_structs
     {
         // VERSION 27 // VERSION 27 // VERSION 27 //
@@ -388,7 +626,7 @@ namespace Infinite_module_test
                                     
                                     tag child_tag = new(plugin_path, null, reference_root);
                                     if (resource_list[processed_resource_index].Value == false)
-                                    { // this is an ERROR, 
+                                    { // this is an ERROR, but we do not care because w;'
 
                                     }
                                     if (!child_tag.Load_tag_file(resource_list[processed_resource_index].Key, struct_guid))
