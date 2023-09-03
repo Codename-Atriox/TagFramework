@@ -25,15 +25,15 @@ namespace Infinite_module_test{
     public static class module_structs{
         public class module{
             // we have to simulate a file structure with modules, so our hierarchy works
-            Dictionary<string, List<indexed_module_file>> file_groups = new();
-            struct indexed_module_file{
+            public Dictionary<string, List<indexed_module_file>> file_groups = new();
+            public struct indexed_module_file{
                 public indexed_module_file(string _name, int source_index, bool resource){
                     name = _name;
                     source_file_header_index = source_index;
                     is_resource = resource;}
                 public string name;
                 public int source_file_header_index;
-                public bool is_resource;
+                public bool is_resource; // i think we're supposed to use this to tell users whether they can open this or not?
             }
 
             public module_header module_info;
@@ -50,71 +50,72 @@ namespace Infinite_module_test{
                 module_file_path = module_path;
                 // and then he said "it's module'n time"
                 if (!File.Exists(module_file_path)) throw new Exception("failed to find specified module file"); // probably redundant
+
+                module_reader = new FileStream(module_file_path, FileMode.Open, FileAccess.Read);
+               
+                // read module header
+                module_info = read_and_convert_to<module_header>(module_header_size);
+
+                // read module file headers
+                files = new module_file[module_info.FileCount];
+                for (int i = 0; i < files.Length; i++)
+                    files[i] = read_and_convert_to<module_file>(module_file_size);
+
+                // read the string table
+                string_table = new byte[module_info.StringsSize];
+                module_reader.Read(string_table, 0, module_info.StringsSize);
+
+                // read the resource indicies?
+                resource_table = new int[module_info.ResourceCount];
+                for (int i = 0; i < resource_table.Length; i++)
+                    resource_table[i] = read_and_convert_to<int>(4); // we should also fix this one too
+
+                // read the data blocks
+                blocks = new block_header[module_info.BlockCount];
+                for (int i = 0; i < blocks.Length; i++)
+                    blocks[i] = read_and_convert_to<block_header>(block_header_size);
+
+                // now to read the compressed data junk
+
+                // align accordingly to 0x?????000 padding to read data
+                tagdata_base = (module_reader.Position / 0x1000 + 1) * 0x1000;
+                //module_reader.Seek(aligned_address, SeekOrigin.Begin);
+
+                // then we need to map out our directory, so the tools 
+                for (int i = 0; i < files.Length; i++){
+                    module_file tag = files[i];
+                    if (tag.ParentIndex != -1){ // resource file
+                        // get parent tag so we can reference that for names
+                        module_file par_tag = files[tag.ParentIndex];
+
+                        // init group if it hasn't been already
+                        string group = groupID_str(par_tag.ClassId);
+                        if (!file_groups.ContainsKey(group))
+                            file_groups.Add(group, new List<indexed_module_file>());
+
+                        // get tag name // names list not implemented yet
+                        string tagname = par_tag.GlobalTagId.ToString("X");
+                        // figure out what index this resource is
+                        int resource_index = -1;
+                        for (int r = 0; r < par_tag.ResourceCount; r++){
+                            if (resource_table[par_tag.ResourceIndex + r] == i){
+                                resource_index = r;
+                                break;
+                        }}
+                        tagname += "_res_" + resource_index;
+                        file_groups[group].Add(new(tagname, i, true));
+
+                    }else{ // a rewgular tag file
+                        // init group if it hasn't been already
+                        string group = groupID_str(tag.ClassId);
+                        if (!file_groups.ContainsKey(group))
+                            file_groups.Add(group, new List<indexed_module_file>());
+                        // get tagname and add to directory
+                        string tagname = tag.GlobalTagId.ToString("X");
+                        file_groups[group].Add(new(tagname, i, false));
+                }}
+                // ok thats all, the tags have been read
                 
-                using (module_reader = new FileStream(module_file_path, FileMode.Open, FileAccess.Read)){
-                    // read module header
-                    module_info = read_and_convert_to<module_header>(module_header_size);
-
-                    // read module file headers
-                    files = new module_file[module_info.FileCount];
-                    for (int i = 0; i < files.Length; i++)
-                        files[i] = read_and_convert_to<module_file>(module_file_size);
-
-                    // read the string table
-                    string_table = new byte[module_info.StringsSize];
-                    module_reader.Read(string_table, 0, module_info.StringsSize);
-
-                    // read the resource indicies?
-                    resource_table = new int[module_info.ResourceCount];
-                    for (int i = 0; i < resource_table.Length; i++)
-                        resource_table[i] = read_and_convert_to<int>(4); // we should also fix this one too
-
-                    // read the data blocks
-                    blocks = new block_header[module_info.BlockCount];
-                    for (int i = 0; i < blocks.Length; i++)
-                        blocks[i] = read_and_convert_to<block_header>(block_header_size);
-
-                    // now to read the compressed data junk
-
-                    // align accordingly to 0x?????000 padding to read data
-                    tagdata_base = (module_reader.Position / 0x1000 + 1) * 0x1000;
-                    //module_reader.Seek(aligned_address, SeekOrigin.Begin);
-
-                    // then we need to map out our directory, so the tools 
-                    for (int i = 0; i < files.Length; i++){
-                        module_file tag = files[i];
-                        if (tag.ParentIndex != -1){ // resource file
-                            // get parent tag so we can reference that for names
-                            module_file par_tag = files[tag.ParentIndex];
-
-                            // init group if it hasn't been already
-                            string group = groupID_str(par_tag.ClassId);
-                            if (!file_groups.ContainsKey(group))
-                                file_groups.Add(group, new List<indexed_module_file>());
-
-                            // get tag name // names list not implemented yet
-                            string tagname = par_tag.GlobalTagId.ToString("X");
-                            // figure out what index this resource is
-                            int resource_index = -1;
-                            for (int r = 0; r < par_tag.ResourceCount; r++){
-                                if (resource_table[par_tag.ResourceIndex + r] == i){
-                                    resource_index = r;
-                                    break;
-                            }}
-                            tagname += "_res_" + resource_index;
-                            file_groups[group].Add(new(tagname, i, true));
-
-                        }else{ // a rewgular tag file
-                            // init group if it hasn't been already
-                            string group = groupID_str(tag.ClassId);
-                            if (!file_groups.ContainsKey(group))
-                                file_groups.Add(group, new List<indexed_module_file>());
-                            // get tagname and add to directory
-                            string tagname = tag.GlobalTagId.ToString("X");
-                            file_groups[group].Add(new(tagname, i, false));
-                    }}
-                    // ok thats all, the tags have been read
-                }
             }
             public byte[] get_module_file_bytes(module_file tag)
             {
@@ -359,9 +360,11 @@ namespace Infinite_module_test{
 
                 for (uint i = 0; i < block_to_struct_links.Length; i++) block_to_struct_links[i] = -1; // placeholdewr until we hfigure out how to do this normally
 
+                // structs can be inlined ??? huh?
+
                 for (uint i = 0; i < tag_structs.Length; i++) {
                     if (tag_structs[i].TargetIndex == -1 || tag_structs[i].Type == 2 || tag_structs[i].Type == 4) continue; // either a null struct or is a resource struct
-                    // FU joe halo, why are some of your tags poorly formatted, where tags structs can have the same target index
+                    // FU joe halo, why are some of your tags poorly formatted, where tags structs can have the same target index as their field index
                     if (block_to_struct_links[tag_structs[i].TargetIndex] != -1) continue; // FAILSAFE
 
                     block_to_struct_links[tag_structs[i].TargetIndex] = (int)i;
@@ -623,7 +626,9 @@ namespace Infinite_module_test{
                                     //data_block data_data = data_blocks[test.TargetIndex];
                                     //byte[] data_bytes = return_referenced_byte_segment(data_data.Section).Skip((int)data_data.Offset).Take((int)data_data.Size).ToArray();
                                     //string bitles = BitConverter.ToString(data_bytes).Replace('-', ' ');
-                                    
+                                    if (processed_resource_index >= resource_list.Count)
+                                        continue; // we dont have anything left to feed to this guy
+
                                     tag child_tag = new(plugin_path, null, reference_root);
                                     if (resource_list[processed_resource_index].Value == false)
                                     { // this is an ERROR, but we do not care because w;'
