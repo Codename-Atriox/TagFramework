@@ -94,7 +94,7 @@ namespace Infinite_module_test{
                             file_groups.Add(group, new List<indexed_module_file>());
 
                         // get tag name // names list not implemented yet
-                        string tagname = par_tag.GlobalTagId.ToString("X");
+                        string tagname = par_tag.GlobalTagId.ToString("X8");
                         // figure out what index this resource is
                         int resource_index = -1;
                         for (int r = 0; r < par_tag.ResourceCount; r++){
