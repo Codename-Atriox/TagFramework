@@ -13,6 +13,11 @@ namespace Infinite_module_test
         public static unsafe T SuperCast<T>(byte[] data) => *(T*)(*(ulong*)&data + 0x10);
         public static unsafe T SuperCast<T>(byte[] data, ulong startIndex) => *(T*)(*(ulong*)&data + (0x10 + startIndex));
         // DEBUG METHOD // DEBUG METHOD // DEBUG METHOD //
+        public static unsafe T KindaSafe_SuperCast<T>(byte[] data){ // double checks that the address is correct by comparing the actual size of the array with the size at he address, should not be needed.
+            fixed(byte* data_ptr = &data[0])
+                return *(T*)data_ptr; // this should be the correct way to do this?
+        }
+        /*
         public static unsafe T KindaSafe_SuperCast<T>(byte[] data) // double checks that the address is correct by comparing the actual size of the array with the size at he address, should not be needed.
         {
             ulong data_ptr = *(ulong*)&data;
@@ -20,7 +25,7 @@ namespace Infinite_module_test
                 return *(T*)(data_ptr + 0x10); // 0x10 is the start of the actual data
             throw new Exception("super cast failed, c# version issue?");
             return default(T);
-        }
+        } */
         // DEBUG METHOD // DEBUG METHOD // DEBUG METHOD //
         public static unsafe T KindaSafe_SuperCast<T>(byte[] data, ulong startIndex)
         {

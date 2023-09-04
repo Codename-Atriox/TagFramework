@@ -85,6 +85,8 @@ namespace Infinite_module_test{
                 // then we need to map out our directory, so the tools 
                 for (int i = 0; i < files.Length; i++){
                     module_file tag = files[i];
+                    //Console.WriteLine("parent_index: " + tag.ParentIndex + " block_index: " + tag.BlockIndex + " block_count: " + tag.BlockCount + " data_offset: " + tag.get_dataoffset());
+
                     if (tag.ParentIndex != -1){ // resource file
                         // get parent tag so we can reference that for names
                         module_file par_tag = files[tag.ParentIndex];
@@ -169,10 +171,23 @@ namespace Infinite_module_test{
                     } else module_reader.Read(decompressed_data, 0, tag.TotalUncompressedSize);
                 }
 
+
+                //for (int i = 0; i < 10; i++)
+                //{
+                //    Console.WriteLine("0x" + decompressed_data[i].ToString("X2"));
+
+                //}
+                //Console.WriteLine("parent_index: " + tag.ParentIndex + " block_index: " + tag.BlockIndex + " block_count: " + tag.BlockCount + " data_offset: " + tag.get_dataoffset());
+                //Console.ReadLine();
+
+
                 return decompressed_data;
             }
             public byte[] get_tag_bytes(int tag_index){ // kinda redundant
-                return get_module_file_bytes(files[tag_index]);
+                module_file tag = files[tag_index];
+                //Console.WriteLine("parent_index: " + tag.ParentIndex + " block_index: " + tag.BlockIndex + " block_count: " + tag.BlockCount + " data_offset: " + tag.get_dataoffset());
+                //Console.ReadLine();
+                return get_module_file_bytes(tag);
             }
             public List<byte[]> get_tag_resource_list(int tag_index){
                 // get all resources & then read them into a list
