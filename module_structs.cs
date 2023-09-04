@@ -13,6 +13,7 @@ using static System.Collections.Specialized.BitVector32;
 using static System.Net.Mime.MediaTypeNames;
 
 using OodleSharp;
+using System.Reflection.PortableExecutable;
 
 // TODO:
 // 1. separate loading into its own class, so that all data used is easily disposable
@@ -111,11 +112,23 @@ namespace Infinite_module_test{
                         if (!file_groups.ContainsKey(group))
                             file_groups.Add(group, new List<indexed_module_file>());
                         // get tagname and add to directory
-                        string tagname = tag.GlobalTagId.ToString("X");
+                        string tagname = tag.GlobalTagId.ToString("X8");
                         file_groups[group].Add(new(tagname, i, false));
                 }}
                 // ok thats all, the tags have been read
-                
+
+                //// debug this 
+                //// load & process the tag
+                //List<KeyValuePair<byte[], bool>> resource_list = new();
+                //string plugins_path = "C:\\Users\\Joe bingle\\Downloads\\plugins";
+
+                //tag test = new tag(plugins_path, resource_list);
+                //try{byte[] tagbytes = get_tag_bytes(582);
+                //    if (!test.Load_tag_file(tagbytes)){
+                //        throw new Exception("20DFA4DA" + " was not able to be loaded as a tag");
+                //}} catch (Exception ex){ 
+                //    throw new Exception("20DFA4DA" + " returned an error: " + ex.Message);
+                //}
             }
             public byte[] get_module_file_bytes(module_file tag)
             {
@@ -133,14 +146,14 @@ namespace Infinite_module_test{
                         var bloc = blocks[tag.BlockIndex + b];
                         byte[] block_bytes;
 
+                        // as it turns out, the 'compressedOffset' means the offset from the datablocks
+                        module_reader.Seek(data_Address + bloc.CompressedOffset, SeekOrigin.Begin);
                         if (bloc.Compressed == 1){
-                            module_reader.Seek(data_Address + bloc.CompressedOffset, SeekOrigin.Begin);
 
                             byte[] bytes = new byte[bloc.CompressedSize];
                             module_reader.Read(bytes, 0, bytes.Length);
                             block_bytes = Oodle.Decompress(bytes, bytes.Length, bloc.UncompressedSize);
                         }else{ // uncompressed
-                            module_reader.Seek(data_Address + bloc.UncompressedOffset, SeekOrigin.Begin);
 
                             block_bytes = new byte[bloc.UncompressedSize];
                             module_reader.Read(block_bytes, 0, block_bytes.Length);
@@ -278,8 +291,7 @@ namespace Infinite_module_test{
     }
 
 
-    public static class tag_structs
-    {
+    public static class tag_structs{
         // VERSION 27 // VERSION 27 // VERSION 27 //
         // an interesting thing to note is that version 27 was the version of halo 5 forge
         // it seems someone on the engine team failed to update this number, because this struct has certainly changed since
@@ -296,7 +308,10 @@ namespace Infinite_module_test{
         //        |   |       /   /     \   \   \    \______/    /
         //        |   |      /   /       \   \   \              /
         //        |___|     /___/         \___\   \____________/
-        //                            
+        //
+        
+        static Dictionary<string, string>? GUIDs_to_groups = null;
+        public static byte[] tag_magic = new byte[4] { 0x75, 0x63, 0x73, 0x68 };
         // currently having this as a class, so that we can just copy pointers to this structure for effiency
         public class tag {
             public tag(string _plugin_path, List<KeyValuePair<byte[], bool>>? resources, XmlNode _reference_root = null)
@@ -317,115 +332,118 @@ namespace Infinite_module_test{
             // resource path, is whole file
             List<KeyValuePair<byte[], bool>> resource_list;
             int processed_resource_index = 0; // we use this to keep track of which files we've opened
-            private T read_and_convert_to<T>(int read_length) {
+            private T read_and_convert_to<T>(int read_length, MemoryStream tag_reader) {
                 byte[] bytes = new byte[read_length];
                 tag_reader.Read(bytes, 0, read_length);
                 return KindaSafe_SuperCast<T>(bytes);
             }
-            private T[] struct_array_assign_bytes<T>(int count, int struct_size) {
+            private T[] struct_array_assign_bytes<T>(int count, int struct_size, MemoryStream tag_reader) {
                 T[] output = new T[count];
                 for (int i = 0; i < count; i++)
-                    output[i] = read_and_convert_to<T>(struct_size);
+                    output[i] = read_and_convert_to<T>(struct_size, tag_reader);
                 return output;
             }
-            private byte[] read_at(long position, int length) {
+            private byte[] read_at(long position, int length, MemoryStream tag_reader) {
                 byte[] bytes = new byte[length];
                 tag_reader.Seek(position, SeekOrigin.Begin);
                 tag_reader.Read(bytes, 0, length);
                 return bytes;
             }
-            MemoryStream? tag_reader; // to be cleaned up after loading
+            //MemoryStream? tag_reader; // to be cleaned up after loading
             public bool Load_tag_file(byte[] tag_bytes, string target_guid = "") {
                 //if (!File.Exists(tag_path)) return false; // failed via invalid directory
-                tag_reader = new MemoryStream(tag_bytes);
-                // read the first 4 bytes to make sure this is a tag file
-                byte[] header_test = new byte[4];
-                tag_reader.Read(header_test, 0, 4);
-                if (Encoding.UTF8.GetString(header_test) != "ucsh") return false; // failed due to not a tag file
-                // ok begin parsing the tag
-                tag_reader.Seek(0, SeekOrigin.Begin); // reset position
-                header = read_and_convert_to<tag_header>(tag_header_size);
-                // read tag dependencies
-                dependencies = struct_array_assign_bytes<tag_dependency>(header.DependencyCount, tag_dependency_size);
-                // read tag data blocks
-                data_blocks = struct_array_assign_bytes<data_block>(header.DataBlockCount, data_block_size);
-                // read tag ref structures
-                tag_structs = struct_array_assign_bytes<tag_def_structure>(header.TagStructCount, tag_def_structure_size);
-                // process that array into a faster dictionary
-                struct_links = new Dictionary<uint, uint>[tag_structs.Length];
-                // initialize each element in the array
-                for (int i = 0; i < tag_structs.Length; i++) struct_links[i] = new();
-                // write an array of data block's parent structs, so that we may find a structs parent through the block it resides inside of
-                int[] block_to_struct_links = new int[data_blocks.Length];
-
-                for (uint i = 0; i < block_to_struct_links.Length; i++) block_to_struct_links[i] = -1; // placeholdewr until we hfigure out how to do this normally
-
-
-                for (uint i = 0; i < tag_structs.Length; i++) {
-                    if (tag_structs[i].TargetIndex == -1 || tag_structs[i].Type == 2 || tag_structs[i].Type == 4) continue; // either a null struct or is a resource struct
-                    // FU joe halo, why are some of your tags poorly formatted, where tags structs can have the same target index as their field index
-                    if (block_to_struct_links[tag_structs[i].TargetIndex] != -1) continue; // FAILSAFE
-
-                    block_to_struct_links[tag_structs[i].TargetIndex] = (int)i;
-                }
-                // assign the child structs links, based on their parent field block
-                for (uint i = 0; i < tag_structs.Length; i++) {
-                    if (tag_structs[i].Type == 0 || tag_structs[i].Type == 4) continue; // the root struct has no parent, AND TYPE 4'S OVERLAP WITH OTHER PARAMS??
-                    var ven = block_to_struct_links[tag_structs[i].FieldBlock];
-                    var ben = struct_links[ven];
-                    ben.Add(tag_structs[i].FieldOffset, i);
-                }
-                // read tag data references?
-                data_references = struct_array_assign_bytes<data_reference>(header.DataReferenceCount, data_reference_size);
-                // now write the links array, so that we can easily find out which struct owns each data
-                data_links = new Dictionary<uint, uint>[tag_structs.Length];
-                // initialize each element in the array
-                for (uint i = 0; i < tag_structs.Length; i++) data_links[i] = new();
-                for (uint i = 0; i < data_references.Length; i++)
+                using (MemoryStream tag_reader = new MemoryStream(tag_bytes))
                 {
-                    data_links[data_references[i].ParentStructIndex].Add(data_references[i].FieldOffset, i);
+                    // read the first 4 bytes to make sure this is a tag file
+                    byte[] header_test = tag_bytes[0..4];
+
+                    if (!header_test.SequenceEqual(tag_magic)){
+                        return false; // failed due to not a tag file
+                    }
+                    // ok begin parsing the tag
+                    tag_reader.Seek(0, SeekOrigin.Begin); // reset position
+                    header = read_and_convert_to<tag_header>(tag_header_size, tag_reader);
+                    // read tag dependencies
+                    dependencies = struct_array_assign_bytes<tag_dependency>(header.DependencyCount, tag_dependency_size, tag_reader);
+                    // read tag data blocks
+                    data_blocks = struct_array_assign_bytes<data_block>(header.DataBlockCount, data_block_size, tag_reader);
+                    // read tag ref structures
+                    tag_structs = struct_array_assign_bytes<tag_def_structure>(header.TagStructCount, tag_def_structure_size, tag_reader);
+                    // process that array into a faster dictionary
+                    struct_links = new Dictionary<uint, uint>[tag_structs.Length];
+                    // initialize each element in the array
+                    for (int i = 0; i < tag_structs.Length; i++) struct_links[i] = new();
+                    // write an array of data block's parent structs, so that we may find a structs parent through the block it resides inside of
+                    int[] block_to_struct_links = new int[data_blocks.Length];
+
+                    for (uint i = 0; i < block_to_struct_links.Length; i++) block_to_struct_links[i] = -1; // placeholdewr until we hfigure out how to do this normally
+
+
+                    for (uint i = 0; i < tag_structs.Length; i++){
+                        if (tag_structs[i].TargetIndex == -1 || tag_structs[i].Type == 2 || tag_structs[i].Type == 4) continue; // either a null struct or is a resource struct
+                        // FU joe halo, why are some of your tags poorly formatted, where tags structs can have the same target index as their field index
+                        if (block_to_struct_links[tag_structs[i].TargetIndex] != -1) continue; // FAILSAFE
+
+                        block_to_struct_links[tag_structs[i].TargetIndex] = (int)i;
+                    }
+                    // assign the child structs links, based on their parent field block
+                    for (uint i = 0; i < tag_structs.Length; i++){
+                        if (tag_structs[i].Type == 0 || tag_structs[i].Type == 4) continue; // the root struct has no parent, AND TYPE 4'S OVERLAP WITH OTHER PARAMS??
+                        var ven = block_to_struct_links[tag_structs[i].FieldBlock];
+                        var ben = struct_links[ven];
+                        ben.Add(tag_structs[i].FieldOffset, i);
+                    }
+                    // read tag data references?
+                    data_references = struct_array_assign_bytes<data_reference>(header.DataReferenceCount, data_reference_size, tag_reader);
+                    // now write the links array, so that we can easily find out which struct owns each data
+                    data_links = new Dictionary<uint, uint>[tag_structs.Length];
+                    // initialize each element in the array
+                    for (uint i = 0; i < tag_structs.Length; i++) data_links[i] = new();
+                    for (uint i = 0; i < data_references.Length; i++)
+                        data_links[data_references[i].ParentStructIndex].Add(data_references[i].FieldOffset, i);
+                    
+
+                    // TAG STRUCTS ALSO REFER TO RESOURCE FILE STRUCTS!!!!!!!!!!!!!
+
+                    // read tag tag fixup references 
+                    tag_fixup_references = struct_array_assign_bytes<tag_fixup_reference>(header.TagReferenceCount, tag_fixup_reference_size, tag_reader);
+                    // assign the string table bytes, wow this is not convienent at all lol // more or less now more convenient
+                    //if (header.StringTableSize > 0) { // this is no longer used !!!! despite what the few tags are trying to tell us
+                    //    //local_string_table = new byte[header.StringTableSize];
+                    //    local_string_table = new byte[header.StringTableSize];
+                    //    tag_reader.Read(local_string_table, 0, (int)header.StringTableSize);
+                    //}
+                    // read the zoneset header
+                    zoneset_info = read_and_convert_to<zoneset_header>(zoneset_header_size, tag_reader);
+                    /* // ZONESETS SEEM TO BE NULLED (BD'd) OUT???
+                    // read all the zoneset instances
+                    zonesets = new zoneset_instance[zoneset_info.ZonesetCount];
+                    // its literally not possible for that to be a null reference, we just set it above
+                    for (int m = 0; m < zonesets.Length; m++) {
+                        // read the header
+                        zonesets[m].header = read_and_convert_to<zoneset_instance_header>(zoneset_instance_header_size);
+                        // read the regular zoneset tags
+                        zonesets[m].zonset_tags = struct_array_assign_bytes<zoneset_tag>(zonesets[m].header.TagCount, zoneset_tag_size);
+                        // read the zoneset footer tags (whatever they are?)
+                        zonesets[m].zonset_footer_tags = struct_array_assign_bytes<zoneset_tag>(zonesets[m].header.FooterCount, zoneset_tag_size);
+                        // read the parents
+                        zonesets[m].zonset_parents = struct_array_assign_bytes<int>(zonesets[m].header.ParentCount, 4);
+                    }
+                    */ // we forgot to read the zoneset header bytes?
+
+                    // TODO: we need to cast this below read as the rest of the structures, as we're reading this section twice??
+
+                    // end of header, double check to make sure we read it all correctly // APPARENTLY THERES A LOT OF CASES WITH DATA THAT WE DONT READ !!!!!!!!!!!!!! FU BUNGIE
+                    // read tag header data (so we can access any tag data that gets stored at the end)
+                    header_data = read_at(0, (int)header.HeaderSize, tag_reader);
+                    // read tag data
+                    if (header.DataSize > 0) tag_data = read_at(header.HeaderSize, (int)header.DataSize, tag_reader);
+                    // read resource data
+                    if (header.ResourceDataSize > 0) tag_resource = read_at(header.HeaderSize + header.DataSize, (int)header.ResourceDataSize, tag_reader);
+                    // read actual resource data
+                    if (header.ActualResoureDataSize > 0) actual_tag_resource = read_at(header.HeaderSize + header.DataSize + header.ResourceDataSize, (int)header.ActualResoureDataSize, tag_reader);
                 }
 
-                // TAG STRUCTS ALSO REFER TO RESOURCE FILE STRUCTS!!!!!!!!!!!!!
-
-                // read tag tag fixup references 
-                tag_fixup_references = struct_array_assign_bytes<tag_fixup_reference>(header.TagReferenceCount, tag_fixup_reference_size);
-                // assign the string table bytes, wow this is not convienent at all lol // more or less now more convenient
-                if (header.StringTableSize > 0) {
-                    //local_string_table = new byte[header.StringTableSize];
-                    local_string_table = new byte[header.StringTableSize];
-                    tag_reader.Read(local_string_table, 0, (int)header.StringTableSize);
-                }
-                // read the zoneset header
-                zoneset_info = read_and_convert_to<zoneset_header>(zoneset_header_size);
-                /* // ZONESETS SEEM TO BE NULLED (BD'd) OUT???
-                // read all the zoneset instances
-                zonesets = new zoneset_instance[zoneset_info.ZonesetCount];
-                // its literally not possible for that to be a null reference, we just set it above
-                for (int m = 0; m < zonesets.Length; m++) {
-                    // read the header
-                    zonesets[m].header = read_and_convert_to<zoneset_instance_header>(zoneset_instance_header_size);
-                    // read the regular zoneset tags
-                    zonesets[m].zonset_tags = struct_array_assign_bytes<zoneset_tag>(zonesets[m].header.TagCount, zoneset_tag_size);
-                    // read the zoneset footer tags (whatever they are?)
-                    zonesets[m].zonset_footer_tags = struct_array_assign_bytes<zoneset_tag>(zonesets[m].header.FooterCount, zoneset_tag_size);
-                    // read the parents
-                    zonesets[m].zonset_parents = struct_array_assign_bytes<int>(zonesets[m].header.ParentCount, 4);
-                }
-                */
-                // end of header, double check to make sure we read it all correctly // APPARENTLY THERES A LOT OF CASES WITH DATA THAT WE DONT READ !!!!!!!!!!!!!! FU BUNGIE
-                // read tag header data (so we can access any tag data that gets stored at the end)
-                header_data = read_at(0, (int)header.HeaderSize);
-                // read tag data
-                if (header.DataSize > 0) tag_data = read_at(header.HeaderSize, (int)header.DataSize);
-                // read resource data
-                if (header.ResourceDataSize > 0) tag_resource = read_at(header.HeaderSize + header.DataSize, (int)header.ResourceDataSize);
-                // read actual resource data
-                if (header.ActualResoureDataSize > 0) actual_tag_resource = read_at(header.HeaderSize + header.DataSize + header.ResourceDataSize, (int)header.ActualResoureDataSize);
-
-                // cleanup tag reading
-                tag_reader.Dispose();
-                tag_reader = null;
                 // and now its time to process that all into proper usable data, 
                 // for the time being, we'll keep all that as global variables,
                 // however when we begin on tag recompiling, we'll make the majority into temp vars
@@ -441,16 +459,19 @@ namespace Infinite_module_test{
                             // because of how this system works, we need to find the GUID first, to figure out what plugin file to use
                             // realistically, we could rename the plugins as their guid value, but that wouldn't be very cool for the people just looking through the files (aka not user friendly)
                             string root_GUID = tag_structs[i].GUID_1.ToString("X16") + tag_structs[i].GUID_2.ToString("X16");
-                            string plugin_guide_path = plugin_path + "\\GUIDs.txt";
-                            string tagus_groupus = "";
-                            using (StreamReader reader = File.OpenText(plugin_guide_path)){
-                                while (!reader.EndOfStream) {
-                                    string[] line = reader.ReadLine().Split(":");
-                                    if (line[1] == root_GUID) {
-                                        tagus_groupus = line[0];
-                                        break;
-                            }}}
 
+                            // init tag GUID's & figure out what tag this is
+                            if (GUIDs_to_groups == null){
+                                GUIDs_to_groups = new();
+                                
+                                string plugin_guide_path = plugin_path + "\\GUIDs.txt";
+                                // TODO: generate into dictionary
+                                using (StreamReader reader = File.OpenText(plugin_guide_path)){
+                                    while (!reader.EndOfStream) {
+                                        string[] line = reader.ReadLine().Split(":");
+                                        GUIDs_to_groups.Add(line[1], line[0]); // GUID -> group
+                            }}}
+                            string tagus_groupus = GUIDs_to_groups[root_GUID];
 
                             // setup reference plugin file
                             reference_xml = new XmlDocument();
@@ -470,10 +491,11 @@ namespace Infinite_module_test{
                             break;
                 }}}
 
-
+                
 
                 Initialized = true;
                 return true;
+                
             }
             public class tagdata_struct
             {
@@ -513,7 +535,10 @@ namespace Infinite_module_test{
                 for (int i = 0; i < block_count; i++)
                 {
                     var test = new thing();
-                    test.tag_data = tag_datas.Skip((int)struct_file_offset.Offset + (referenced_array_size * i)).Take(referenced_array_size).ToArray();
+                    int offset = (int)struct_file_offset.Offset + (referenced_array_size * i);
+                    if (offset + referenced_array_size > tag_datas.Length)
+                        throw new Exception("tagblock referenced data outside of assigned data block");
+                    test.tag_data = tag_datas.Skip(offset).Take(referenced_array_size).ToArray();
                     test.tag_block_refs = new();
                     test.tag_resource_refs = new();
                     test.resource_file_refs = new();
