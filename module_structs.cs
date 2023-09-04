@@ -666,33 +666,33 @@ namespace Infinite_module_test{
             }
 
             // not nullable because we are not checking if its not null 100 times
-            public tag_header header;
-            public tag_dependency[]? dependencies; // header.DependencyCount
-            public data_block[]? data_blocks; // header.DataBlockCount
+            private tag_header header;
+            private tag_dependency[]? dependencies; // header.DependencyCount
+            private data_block[]? data_blocks; // header.DataBlockCount
             // offset , child struct index
-            public Dictionary<uint, uint>[] struct_links;
-            public tag_def_structure[]? tag_structs; // header.TagStructCount
+            private Dictionary<uint, uint>[] struct_links;
+            private tag_def_structure[]? tag_structs; // header.TagStructCount
             // offset , child data_references index
-            public Dictionary<uint, uint>[] data_links;
-            public data_reference[]? data_references; // header.DataReferenceCount
-            public tag_fixup_reference[]? tag_fixup_references; // header.TagReferenceCount
+            private Dictionary<uint, uint>[] data_links;
+            private data_reference[]? data_references; // header.DataReferenceCount
+            private tag_fixup_reference[]? tag_fixup_references; // header.TagReferenceCount
 
             //public string_id_reference[] string_id_references; // potentially unused? double check
-            public byte[]? local_string_table; // header.StringTableSize
+            private byte[]? local_string_table; // header.StringTableSize
             // also non-nullable so we dont have to check if its null or not
-            public zoneset_header zoneset_info;
-            public zoneset_instance[]? zonesets; // zoneset_info.ZoneSetCount
+            private zoneset_header zoneset_info;
+            private zoneset_instance[]? zonesets; // zoneset_info.ZoneSetCount
 
             // and non-required stuff i guess
-            public byte[]? tag_data; // like the actual values that the tag holds, eg. projectile speed and all those thingos
-            public byte[]? tag_resource; // ONLY SEEN TO BE USED IN MAT FILES
-            public byte[]? actual_tag_resource; // used in bitmap files
+            private byte[]? tag_data; // like the actual values that the tag holds, eg. projectile speed and all those thingos
+            private byte[]? tag_resource; // ONLY SEEN TO BE USED IN MAT FILES
+            private byte[]? actual_tag_resource; // used in bitmap files
 
-            public byte[]? raw_file_bytes; // used for reading raw files
+            private byte[]? raw_file_bytes; // used for reading raw files
 
 
             //public byte[]? unmapped_header_data; // used for debugging unmapped structures in headers
-            public byte[]? header_data; // tag structs require us to store the WHOLE header data so the offsets match
+            private byte[]? header_data; // tag structs require us to store the WHOLE header data so the offsets match
             // we could likely setup something so we only use the unmarked and subtract the 
         }
 
