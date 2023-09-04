@@ -360,7 +360,6 @@ namespace Infinite_module_test{
 
                 for (uint i = 0; i < block_to_struct_links.Length; i++) block_to_struct_links[i] = -1; // placeholdewr until we hfigure out how to do this normally
 
-                // structs can be inlined ??? huh?
 
                 for (uint i = 0; i < tag_structs.Length; i++) {
                     if (tag_structs[i].TargetIndex == -1 || tag_structs[i].Type == 2 || tag_structs[i].Type == 4) continue; // either a null struct or is a resource struct
@@ -641,11 +640,18 @@ namespace Infinite_module_test{
                                     append_to.resource_file_refs.Add(tagblock_constant_offset, child_tag.root);
                                     processed_resource_index++;
                                 }
-                                else // chunked resource type
+                                else if (resource_type == 1) // chunked resource type
                                 {
                                     uint next_struct_index = struct_links[struct_index][(uint)data_block_offset];
                                     append_to.resource_file_refs.Add(tagblock_constant_offset, process_highlevel_struct(next_struct_index, struct_guid));
                                 }
+                                else // seems to be present in 'hsc_' ('hsc*') tags, although its not clear what the purpose is, maybe its an extension??
+                                {
+                                    //append_to.resource_file_refs.Add(tagblock_constant_offset, process_highlevel_struct(next_struct_index, struct_guid));
+                                    append_to.resource_file_refs.Add(tagblock_constant_offset, null);
+                                    //throw new Exception("resource is neither chunked, nor a mini tagfile??");
+                                }
+                                
 
                                 //string struct_guid = currentParam.Attributes["GUID"].Value;
                                 //ulong param_offset = relative_offset + data_blocks[tag_struct.TargetIndex].Offset;
