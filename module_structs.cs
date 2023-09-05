@@ -134,6 +134,9 @@ namespace Infinite_module_test{
             }
             public byte[] get_module_file_bytes(module_file tag)
             {
+                
+
+
 
                 // read the flags to determine how to process this file
                 bool using_compression = (tag.Flags & flag_UseCompression) != 0; // pretty sure this is true if reading_seperate_blocks is also true, confirmation needed
@@ -142,6 +145,18 @@ namespace Infinite_module_test{
 
                 byte[] decompressed_data = new byte[tag.TotalUncompressedSize];
                 long data_Address = tagdata_base + tag.get_dataoffset();
+
+                // test whether this tag is HD_1, and match it with our imaginary value
+                if ((tag.get_dataflags() & flag2_UseHd1) == 1){
+                    // then switch to hd1 mode // which for now just means do nothing
+                    return decompressed_data; // currently we cant fail this, and since we dont use this data, just fill blank
+                }
+
+                // also backup test to see if data address is greater than our address
+                if (data_Address >= module_reader.Length){
+                    // then switch to hd1 mode // which for now just means do nothing
+                    return decompressed_data; // currently we cant fail this, and since we dont use this data, just fill blank
+                }
 
                 if (reading_separate_blocks){
                     for (int b = 0; b < tag.BlockCount; b++){
@@ -290,6 +305,8 @@ namespace Infinite_module_test{
         const byte flag_UseCompression = 0b00000001; // Uses Compression
         const byte flag_UseBlocks      = 0b00000010; // has blocks, which means to read the data across several data blocks, otherwise read straight from data offset
         const byte flag_UseRawfile     = 0b00000100; // is a raw file, meaning it has no tag header
+        // data offset flags
+        const byte flag2_UseHd1 = 0b00000001; // if this is checked, then its likely that the tag resides in the hd1 file (if that exists)
 
         public const int block_header_size = 0x14;
         [StructLayout(LayoutKind.Explicit, Size = block_header_size)]
@@ -655,6 +672,9 @@ namespace Infinite_module_test{
                             // hmm, this section works basically exactly the same as tagblocks, except these refer to files outside of this file
                             {
 
+                                uint next_struct_index = struct_links[struct_index][(uint)data_block_offset];
+                                int resource_index = tag_structs[next_struct_index].TargetIndex;
+
                                 string struct_guid = currentParam.Attributes["GUID"].Value;
                                 ulong param_offset = data_block_offset + data_blocks[tag_structs[struct_index].TargetIndex].Offset;
                                 int resource_type = read_int_from_array_at(data_blocks[tag_structs[struct_index].TargetIndex].Section, (int)(param_offset + 12));
@@ -665,12 +685,17 @@ namespace Infinite_module_test{
                                     //data_block data_data = data_blocks[test.TargetIndex];
                                     //byte[] data_bytes = return_referenced_byte_segment(data_data.Section).Skip((int)data_data.Offset).Take((int)data_data.Size).ToArray();
                                     //string bitles = BitConverter.ToString(data_bytes).Replace('-', ' ');
+                                    if (resource_index == -1)
+                                    { // empty resource reference
+                                        append_to.resource_file_refs.Add(tagblock_constant_offset, null);
+                                        continue;
+                                    }
                                     if (processed_resource_index >= resource_list.Count)
-                                        continue; // we dont have anything left to feed to this guy
+                                        throw new Exception("indexed bad resource index");
 
                                     tag child_tag = new(plugin_path, null, reference_root);
                                     if (resource_list[processed_resource_index].Value == false)
-                                    { // this is an ERROR, but we do not care because w;'
+                                    { // this is an ERROR, but we do not care because w;' // epic comment fail
 
                                     }
                                     if (!child_tag.Load_tag_file(resource_list[processed_resource_index].Key, struct_guid))
@@ -678,12 +703,12 @@ namespace Infinite_module_test{
 
                                     }
                                     append_to.resource_file_refs.Add(tagblock_constant_offset, child_tag.root);
-                                    processed_resource_index++;
+                                    processed_resource_index++; // we're now unretiring this guy, because apparently the target index is either 0 or -1;
                                 }
                                 else if (resource_type == 1) // chunked resource type
                                 {
-                                    uint next_struct_index = struct_links[struct_index][(uint)data_block_offset];
                                     append_to.resource_file_refs.Add(tagblock_constant_offset, process_highlevel_struct(next_struct_index, struct_guid));
+                                    // we cant do anything with that data so we completely ignore it
                                 }
                                 else // seems to be present in 'hsc_' ('hsc*') tags, although its not clear what the purpose is, maybe its an extension??
                                 {
