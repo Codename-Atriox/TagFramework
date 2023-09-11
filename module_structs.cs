@@ -14,6 +14,7 @@ using static System.Net.Mime.MediaTypeNames;
 
 using OodleSharp;
 using System.Reflection.PortableExecutable;
+using System.Reflection.Metadata;
 
 // TODO:
 // 1. separate loading into its own class, so that all data used is easily disposable
@@ -96,8 +97,8 @@ namespace Infinite_module_test{
                         if (!file_groups.ContainsKey(group))
                             file_groups.Add(group, new List<indexed_module_file>());
 
-                        // get tag name // names list not implemented yet
-                        string tagname = par_tag.GlobalTagId.ToString("X8");
+                        // get tag name
+                        string tagname = get_shorttagname(par_tag.GlobalTagId);
                         // figure out what index this resource is
                         int resource_index = -1;
                         for (int r = 0; r < par_tag.ResourceCount; r++){
@@ -114,7 +115,7 @@ namespace Infinite_module_test{
                         if (!file_groups.ContainsKey(group))
                             file_groups.Add(group, new List<indexed_module_file>());
                         // get tagname and add to directory
-                        string tagname = tag.GlobalTagId.ToString("X8");
+                        string tagname = get_shorttagname(tag.GlobalTagId);
                         file_groups[group].Add(new(tagname, i, false));
                 }}
                 // ok thats all, the tags have been read
@@ -281,7 +282,7 @@ namespace Infinite_module_test{
             [FieldOffset(0x18)] public int TotalCompressedSize;    // "The total size of compressed data."
             [FieldOffset(0x1C)] public int TotalUncompressedSize;  // "The total size of the data after it is uncompressed. If this is 0, then the file is empty."
 
-            [FieldOffset(0x20)] public int GlobalTagId;   // this is the murmur3 hash; autogenerate from tag path
+            [FieldOffset(0x20)] public uint GlobalTagId;   // this is the murmur3 hash; autogenerate from tag path
 
             [FieldOffset(0x24)] public int UncompressedHeaderSize;
             [FieldOffset(0x28)] public int UncompressedTagDataSize;
@@ -322,7 +323,8 @@ namespace Infinite_module_test{
         }
     }
 
-
+    // load stringID's
+    // load tagnames
     public static class tag_structs{
         // VERSION 27 // VERSION 27 // VERSION 27 //
         // an interesting thing to note is that version 27 was the version of halo 5 forge
@@ -341,7 +343,67 @@ namespace Infinite_module_test{
         //        |   |      /   /       \   \   \              /
         //        |___|     /___/         \___\   \____________/
         //
-        
+        static Dictionary<uint, string> stringIDs = new Dictionary<uint, string>();
+        static Dictionary<uint, string> tagnames = new Dictionary<uint, string>();
+        const string stringIDs_path = "C:\\Users\\Joe bingle\\Downloads\\HASHING\\outtest4.txt";
+        const string tagnames_path = "C:\\Users\\Joe bingle\\Downloads\\IRTV\\files\\tagnames.txt";
+        public static void init_strings(){
+            // generate stringID's list
+            var lines = File.ReadLines(stringIDs_path);
+            foreach (var line in lines){
+                string[] parts = line.Split(":");
+                uint stringid = Convert.ToUInt32(parts[0], 16);
+                stringIDs[stringid] = parts[1];
+            }
+            // generate tagnames list
+            lines = File.ReadLines(tagnames_path);
+            foreach (var line in lines){
+                string[] parts = line.Split(" : ");
+                uint tagid = Convert.ToUInt32(parts[0], 16);
+                tagnames[tagid] = parts[1];
+            }
+        }
+        public static string get_shorttagname(uint tagid) { 
+            if (tagnames.TryGetValue(reverse_uint(tagid), out string? tagname))
+            {
+                // get extension to test whether we need to get the second best name
+                string ext = tagname.Split(".").Last();
+                switch (ext){
+                    case "runtime_geo":
+                    case "static_collision":
+                    case "rtmp":
+                    case "model":
+                        // we can only do the second best name if it has at least a single '\' (which would be odd if it didn't)
+                        string[] paths = tagname.Split("\\");
+                        if (paths.Length >= 2) return paths[paths.Length - 2].Split(".").First();
+                        else break;
+                }
+
+
+                return tagname.Split("\\").Last().Split(".").First();
+
+            }
+            else return reverse_uint(tagid).ToString("X8");
+            // we want to get rid of the dumb names for dumb tags, so filter out basic types like
+        }
+        public static string get_tagname(uint tagid){
+            if (tagnames.TryGetValue(reverse_uint(tagid), out string? tagname))
+                return tagname;
+            else return reverse_uint(tagid).ToString("X8");
+        }
+        public static string get_stringid(uint stringid){
+            if (stringIDs.TryGetValue(reverse_uint(stringid), out string? stringname))
+                return stringname;
+            else return reverse_uint(stringid).ToString("X8");
+        }
+        private static uint reverse_uint(uint input){
+            uint output = ((input & 0xff) << 24)
+                        | ((input & 0xff00) << 8)
+                        | ((input & 0xff0000) >> 8)
+                        | ((input & 0xff000000) >> 24);
+            return output;
+        }
+
         static Dictionary<string, string>? GUIDs_to_groups = null;
         public static byte[] tag_magic = new byte[4] { 0x75, 0x63, 0x73, 0x68 };
         // currently having this as a class, so that we can just copy pointers to this structure for effiency
