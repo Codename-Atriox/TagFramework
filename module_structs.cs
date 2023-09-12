@@ -25,7 +25,6 @@ using System.Text.Unicode;
 
 
 namespace Infinite_module_test{
-
     public static class MapInfo
     {
         static public List<module_structs.module> open_mapinfo(string path)
@@ -75,11 +74,13 @@ namespace Infinite_module_test{
             // we have to simulate a file structure with modules, so our hierarchy works
             public Dictionary<string, List<indexed_module_file>> file_groups = new();
             public struct indexed_module_file{
-                public indexed_module_file(string _name, int source_index, bool resource){
+                public indexed_module_file(string _name, string _alias, int source_index, bool resource){
                     name = _name;
+                    alias = _alias;
                     source_file_header_index = source_index;
                     is_resource = resource;}
                 public string name;
+                public string alias;
                 public int source_file_header_index;
                 public bool is_resource; // i think we're supposed to use this to tell users whether they can open this or not?
             }
@@ -144,6 +145,7 @@ namespace Infinite_module_test{
                             file_groups.Add(group, new List<indexed_module_file>());
 
                         // get tag name
+                        string idname = par_tag.GlobalTagId.ToString("X8");
                         string tagname = get_shorttagname(par_tag.GlobalTagId);
                         // figure out what index this resource is
                         int resource_index = -1;
@@ -153,7 +155,8 @@ namespace Infinite_module_test{
                                 break;
                         }}
                         tagname += "_res_" + resource_index;
-                        file_groups[group].Add(new(tagname, i, true));
+                        idname += "_res_" + resource_index;
+                        file_groups[group].Add(new(idname, tagname, i, true));
 
                     }else{ // a rewgular tag file
                         // init group if it hasn't been already
@@ -161,8 +164,9 @@ namespace Infinite_module_test{
                         if (!file_groups.ContainsKey(group))
                             file_groups.Add(group, new List<indexed_module_file>());
                         // get tagname and add to directory
+                        string idname = tag.GlobalTagId.ToString("X8");
                         string tagname = get_shorttagname(tag.GlobalTagId);
-                        file_groups[group].Add(new(tagname, i, false));
+                        file_groups[group].Add(new(idname, tagname, i, false));
                 }}
                 // ok thats all, the tags have been read
 
