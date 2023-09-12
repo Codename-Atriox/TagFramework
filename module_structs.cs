@@ -15,6 +15,8 @@ using static System.Net.Mime.MediaTypeNames;
 using OodleSharp;
 using System.Reflection.PortableExecutable;
 using System.Reflection.Metadata;
+using System.Reflection;
+using System.Text.Unicode;
 
 // TODO:
 // 1. separate loading into its own class, so that all data used is easily disposable
@@ -24,6 +26,50 @@ using System.Reflection.Metadata;
 
 namespace Infinite_module_test{
 
+    public static class MapInfo
+    {
+        static public List<module_structs.module> open_mapinfo(string path)
+        {
+            // we always assume the mapinfos are where 343 put them
+            // so we can split the path to find the directory to the module files
+
+            string halo_infinite_path = path.Split("__cms__")[0];
+            List<module_structs.module> result = new();
+
+            // open & process mapinfo file
+            // read the garbage
+            byte[] bytes = File.ReadAllBytes(path);
+
+            int name_length = bytes[3];
+
+            int offset_to_name_size = 4 + name_length + 0xc;
+            int path_length = bytes[offset_to_name_size];
+
+            int offset_to_module_files = offset_to_name_size + 1 + path_length + 0x3c;
+
+            int modules_count = bytes[offset_to_module_files];
+            offset_to_module_files++;
+
+            int current_offset = offset_to_module_files;
+            for (int i = 0; i < modules_count; i++){
+                int string_length = bytes[current_offset];
+                current_offset++;
+                string module = System.Text.Encoding.UTF8.GetString(bytes, current_offset, string_length);
+                // fixup name
+                if (module.StartsWith("%(Platform)"))
+                    module = "pc" + module.Substring(11);
+
+                // then correct the path to be a real path
+
+                module = halo_infinite_path + "deploy\\" + module;
+                result.Add(new module_structs.module(module));
+
+                current_offset += string_length;
+            }
+
+            return result;
+        }
+    }
     public static class module_structs{
         public class module{
             // we have to simulate a file structure with modules, so our hierarchy works
@@ -44,7 +90,7 @@ namespace Infinite_module_test{
             public int[] resource_table; // the function of this array is to index all of the tags that rely on resource things (not blocks), like models i think // ResourceCount
             public block_header[] blocks; // BlockCount
 
-            string module_file_path; // idk why we'd need to store this
+            public string module_file_path; // idk why we'd need to store this
 
             FileStream module_reader; // so we can read from the module when calling tags
             long tagdata_base;
@@ -345,8 +391,8 @@ namespace Infinite_module_test{
         //
         static Dictionary<uint, string> stringIDs = new Dictionary<uint, string>();
         static Dictionary<uint, string> tagnames = new Dictionary<uint, string>();
-        const string stringIDs_path = "C:\\Users\\Joe bingle\\Downloads\\HASHING\\outtest4.txt";
-        const string tagnames_path = "C:\\Users\\Joe bingle\\Downloads\\IRTV\\files\\tagnames.txt";
+        const string stringIDs_path = "files\\outtest9.txt";
+        const string tagnames_path = "files\\tagnames.txt";
         public static void init_strings(){
             // generate stringID's list
             var lines = File.ReadLines(stringIDs_path);
