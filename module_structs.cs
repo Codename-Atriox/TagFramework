@@ -27,6 +27,7 @@ using System.Text.Unicode;
 namespace Infinite_module_test{
     public static class MapInfo
     {
+        static byte[] mapinfo_pattern = new byte[4] { 0x61, 0x6E, 0x79, 0x5C };
         static public List<module_structs.module> open_mapinfo(string path)
         {
             // we always assume the mapinfos are where 343 put them
@@ -39,17 +40,26 @@ namespace Infinite_module_test{
             // read the garbage
             byte[] bytes = File.ReadAllBytes(path);
 
-            int name_length = bytes[3];
+            //int name_length = bytes[3];
 
-            int offset_to_name_size = 4 + name_length + 0xc;
-            int path_length = bytes[offset_to_name_size];
+            //int offset_to_name_size = 4 + name_length + 0xc;
+            //int path_length = bytes[offset_to_name_size];
 
-            int offset_to_module_files = offset_to_name_size + 1 + path_length + 0x3c;
+            //int offset_to_module_files = offset_to_name_size + 1 + path_length + 0x3c;
 
-            int modules_count = bytes[offset_to_module_files];
-            offset_to_module_files++;
-
-            int current_offset = offset_to_module_files;
+            //int modules_count = bytes[offset_to_module_files];
+            //offset_to_module_files++;
+            // we are just going to find the first module and do the offsets from there
+            int first_offset = 0;
+            while (true){
+                if (first_offset + 4 >= bytes.Length)
+                    throw new Exception("could not find matching pattern in mapinfo.");
+                if (bytes[first_offset..(first_offset+4)].SequenceEqual(mapinfo_pattern))
+                    break;
+                first_offset++;
+            }
+            int modules_count = bytes[first_offset-2];
+            int current_offset = first_offset-1;
             for (int i = 0; i < modules_count; i++){
                 int string_length = bytes[current_offset];
                 current_offset++;
