@@ -426,22 +426,29 @@ namespace Infinite_module_test{
         public static string get_shorttagname(uint tagid) { 
             if (tagnames.TryGetValue(reverse_uint(tagid), out string? tagname))
             {
-                // get extension to test whether we need to get the second best name
-                string ext = tagname.Split(".").Last();
-                switch (ext){
-                    case "runtime_geo":
-                    case "static_collision":
-                    case "rtmp":
-                    case "model":
-                        // we can only do the second best name if it has at least a single '\' (which would be odd if it didn't)
-                        string[] paths = tagname.Split("\\");
-                        if (paths.Length >= 2) return paths[paths.Length - 2].Split(".").First();
-                        else break;
-                }
+                // old method, gets single phrase name
+                //// get extension to test whether we need to get the second best name
+                //string ext = tagname.Split(".").Last();
+                //switch (ext){
+                //    case "runtime_geo":
+                //    case "static_collision":
+                //    case "rtmp":
+                //    case "model":
+                //        // we can only do the second best name if it has at least a single '\' (which would be odd if it didn't)
+                //        string[] paths = tagname.Split("\\");
+                //        if (paths.Length >= 2) return paths[paths.Length - 2].Split(".").First();
+                //        else break;
+                //}
 
 
-                return tagname.Split("\\").Last().Split(".").First();
+                //return tagname.Split("\\").Last().Split(".").First();
 
+                // new method, pulls file name & parent directory
+                string[] paths = tagname.Split("\\");
+                string result = "";
+                if (paths.Length > 1)
+                    result += paths[paths.Length - 2];
+                return result + paths.Last().Split(".").First();
             }
             else return reverse_uint(tagid).ToString("X8");
             // we want to get rid of the dumb names for dumb tags, so filter out basic types like
