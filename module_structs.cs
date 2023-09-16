@@ -667,6 +667,12 @@ namespace Infinite_module_test{
                 public string GUID;
                 public List<thing> blocks = new();
             }
+            // do we even need this, or do we just want to read the data straight from the tagreference structure inlined into the tagdata???
+            public class tagref{
+                public uint GlobalID;
+                public ulong AssetID;
+                public uint GroupTag;
+            }
             public struct thing
             {
                 // array of the struct bytes
@@ -945,7 +951,7 @@ namespace Infinite_module_test{
 
 
 
-            void compile_struct(XmlNode currentStruct, int field_block, int block_offset)
+            void compile_struct(XmlNode currentStruct, thing _struct, int field_block, int block_offset)
             {
 
                 for (int i = 0; i < currentStruct.ChildNodes.Count; i++)
@@ -957,71 +963,65 @@ namespace Infinite_module_test{
                     int field_offset = block_offset + offset;
 
                     int type = Convert.ToInt32(node.Name.Substring(1), 16);
-                    switch (type)
-                    {
-                        case 0x38:
-                            { // _field_struct 
+                    switch (type){
+                        // these two are just for iterating through the structs, we dont actually need to do anything special to compile them
+                        case 0x38:{ // _field_struct 
                                 string next_guid = node.Attributes?["GUID"]?.Value;
+                                XmlNode next_node = reference_root.SelectSingleNode("_" + next_guid);
 
-
-                                compile_struct();
-
-                                expand_link struct_link = expandus_linkus.child_links[i];
-                                StructParam param = new(param_name, _struct, offset, next_guid, struct_link);
-                                container.Children.Add(param);
-                                setup_struct_element(struct_link, param, current_line);
-                                theoretical_line += struct_link.total_contained_lines;
-                            }
-                            break;
-                        case 0x39:
-                            { // _field_array
-                                string next_guid = node.Attributes?["GUID"]?.Value;
+                                compile_struct(next_node, _struct, field_block, field_offset);
+                            } break;
+                        case 0x39:{ // _field_array
                                 int array_length = Convert.ToInt32(node.Attributes?["Count"]?.Value);
-                                int array_struct_size = Convert.ToInt32(loaded_tag.reference_root.SelectSingleNode('_' + next_guid).Attributes?["Size"]?.Value, 16);
-                                expand_link struct_link = expandus_linkus.child_links[i];
-                                ArrayParam param = new(param_name, _struct, offset, next_guid, struct_link, array_length, array_struct_size);
-                                container.Children.Add(param);
-                                setup_struct_element(struct_link, param, current_line);
-                                theoretical_line += struct_link.total_contained_lines;
-                            }
-                            break;
-                        case 0x40:
-                            { // _field_block_v2
-                                if (!_struct.tag_block_refs.ContainsKey((ulong)offset))
-                                    break;
 
-                                expand_link struct_link = expandus_linkus.child_links[i];
-                                TagblockParam param = new(param_name, _struct.tag_block_refs[(ulong)offset], struct_link);
-                                container.Children.Add(param);
-                                setup_struct_element(struct_link, param, current_line);
-                                theoretical_line += struct_link.total_contained_lines;
-                            }
-                            break;
-                        case 0x41:
-                            { // _field_reference_v2
+                                string next_guid = node.Attributes?["GUID"]?.Value;
+                                XmlNode next_node = reference_root.SelectSingleNode("_" + next_guid);
+                                // make sure this is called on the child node not the current node 
+                                int array_struct_size = Convert.ToInt32(next_node.Attributes?["Size"]?.Value, 16);
+
+                                for (int arr_index = 0; arr_index < array_length; arr_index++)
+                                    compile_struct(next_node, _struct, field_block, field_offset + (arr_index * array_struct_size));
+                            } break;
+
+                        // these 4 all need us to write special stuff into our tag
+
+                        case 0x40:{ // _field_block_v2
+                                // NOTE: local offset, not offset across entire datablock, as we localize all offsets to make things easier to work with
+                                // this also applies for all following struct types
+                                tag_def_structure output_struct = new();
+                                output_struct.GUID_1 = 0;
+                                output_struct.GUID_2 = 0;
+                                output_struct.FieldBlock = field_block;
+                                output_struct.FieldOffset = (uint)field_offset;
+                                output_struct.Unk_0x12 = 0;
+                                // fill in the target index for the struct
+                                if (_struct.tag_block_refs.ContainsKey((ulong)offset)) 
+                                    output_struct.TargetIndex = compile_tagblock(_struct.tag_block_refs[(ulong)offset]);
+                                // else fill blank for this guy
+                                else output_struct.TargetIndex = -1;
+                            }break;
+
+                        case 0x41:{ // _field_reference_v2
                                 TagrefParam new_val = new(param_name, _struct.tag_data, offset, main.Active_TagExplorer);
                                 container.Children.Add(new_val);
-                            }
-                            break;
-                        case 0x42:
-                            { // _field_data_v2
+                            } break;
+
+                        case 0x42:{ // _field_data_v2
                                 DataParam new_val = new(param_name, _struct.tag_resource_refs[(ulong)offset], _struct.tag_data, offset, param_group_sizes[type]);
                                 container.Children.Add(new_val);
-                            }
-                            break;
-                        case 0x43:
-                            { // tag_resource
+                            } break;
+
+                        case 0x43:{ // tag_resource
                                 expand_link struct_link = expandus_linkus.child_links[i];
                                 ResourceParam param = new(param_name, _struct.resource_file_refs[(ulong)offset], struct_link);
                                 container.Children.Add(param);
                                 setup_struct_element(struct_link, param, current_line);
                                 theoretical_line += struct_link.total_contained_lines;
-                            }
-                            break;
+                            } break;
                     }
                 }
             }
-            void compile_tagblock(tagdata_struct _struct){
+            int compile_tagblock(tagdata_struct _struct){
 
                 XmlNode currentStruct = reference_root.SelectSingleNode("_" + _struct.GUID);
                 int referenced_array_size = Convert.ToInt32(currentStruct.Attributes["Size"].Value, 16);
@@ -1030,16 +1030,16 @@ namespace Infinite_module_test{
                 struct_data_block.Section = 1; // tagdata
                 struct_data_block.Offset = (ulong)output_tagdata.Count(); // gets the current allocated data size
 
-                uint field_block = (uint)output_data_blocks.Count(); // gets the next available datablock index
+                int field_block = output_data_blocks.Count(); // gets the next available datablock index
 
 
 
                 // we need to iterate through all the blocks, add up their tagdata & other reference things
                 int total_size = 0;
-                foreach (thing blocks in _struct.blocks){
+                foreach (thing block in _struct.blocks){
 
-                    compile_struct();
-                    total_size += blocks.tag_data.Length;
+                    compile_struct(currentStruct, block, );
+                    total_size += block.tag_data.Length;
 
 
 
@@ -1048,7 +1048,7 @@ namespace Infinite_module_test{
 
 
                 struct_data_block.Size = (uint)total_size;
-                return;
+                return field_block;
             }
             
         }
