@@ -17,6 +17,8 @@ using System.Reflection.PortableExecutable;
 using System.Reflection.Metadata;
 using System.Reflection;
 using System.Text.Unicode;
+using System;
+using System.ComponentModel;
 
 // TODO:
 // 1. separate loading into its own class, so that all data used is easily disposable
@@ -859,6 +861,7 @@ namespace Infinite_module_test{
                 }
             }
 
+
             // not nullable because we are not checking if its not null 100 times
             private tag_header header;
             private tag_dependency[]? dependencies; // header.DependencyCount
@@ -888,6 +891,144 @@ namespace Infinite_module_test{
             //public byte[]? unmapped_header_data; // used for debugging unmapped structures in headers
             private byte[]? header_data; // tag structs require us to store the WHOLE header data so the offsets match
             // we could likely setup something so we only use the unmarked and subtract the 
+
+
+
+            // ////////////// //
+            // TAG COMPILING //
+            // //////////// //
+            tag_header output_tag_header; // we'll edit this in a moment, but we want to carry over the unknowns
+
+            List<data_block> output_data_blocks;
+            List<tag_dependency> output_tag_dependencies;
+
+            List<tag_def_structure> output_structs;
+            List<data_reference> output_data_references;
+            List<tag_fixup_reference> output_tag_fixup_references;
+            List<char> stringtable; // we should just null this out as we dont use it
+
+            // we are probably not ever going to use this, so we could probably just export as they are
+            zoneset_header output_zoneset_header;
+            List<zoneset_instance> output_zonest_instances;
+
+            List<byte> output_tagdata;
+            List<byte> output_tag_resource;
+            List<byte> output_actual_tag_resource;
+            /*
+            public byte[] compile_tag(){
+                if (Initialized == false)
+                    throw new Exception("cannot compile a tag that is not initialized!!");
+
+                output_tag_header = header; // we'll edit this in a moment, but we want to carry over the unknowns
+
+                output_data_blocks = new();
+                // data_blocks
+                output_tag_dependencies = new();
+
+                output_structs = new();
+                output_data_references = new();
+                output_tag_fixup_references = new();
+                stringtable = new(); // we should just nullk this out as we dont use it
+
+                // we are probably not ever going to use this, so we could probably just export as they are
+                output_zoneset_header = zoneset_info;
+                output_zonest_instances = zonesets.ToList();
+
+                output_tagdata = new();
+                output_tag_resource = new();
+                output_actual_tag_resource = new();
+
+                int test = compile_struct(root);
+                return new byte[0];
+            }
+            void compile_struct()
+            {
+
+            }
+            uint compile_tagblock(tagdata_struct _struct){
+
+                XmlNode currentStruct = reference_root.SelectSingleNode("_" + _struct.GUID);
+                int referenced_array_size = Convert.ToInt32(currentStruct.Attributes["Size"].Value, 16);
+
+                data_block struct_data_block = new();
+                struct_data_block.Section = 1; // tagdata
+                struct_data_block.Offset = (ulong)output_tagdata.Count(); // gets the current allocated data size
+
+                uint field_block = (uint)output_data_blocks.Count(); // gets the next available datablock index
+
+
+
+                // we need to iterate through all the blocks, add up their tagdata & other reference things
+                int total_size = 0;
+                foreach (thing blocks in _struct.blocks){
+
+
+                    total_size += blocks.tag_data.Length;
+
+                    for (int i = 0; i < currentStruct.ChildNodes.Count; i++){
+                        XmlNode node = currentStruct.ChildNodes[i];
+
+
+                        int offset = Convert.ToInt32(node.Attributes?["Offset"]?.Value, 16);
+                        int field_offset = total_size + offset;
+                        
+                        int type = Convert.ToInt32(node.Name.Substring(1), 16);
+                        switch (type){
+                            case 0x38:{ // _field_struct 
+                                    string next_guid = node.Attributes?["GUID"]?.Value;
+                                    expand_link struct_link = expandus_linkus.child_links[i];
+                                    StructParam param = new(param_name, _struct, offset, next_guid, struct_link);
+                                    container.Children.Add(param);
+                                    setup_struct_element(struct_link, param, current_line);
+                                    theoretical_line += struct_link.total_contained_lines;
+                                }break;
+                            case 0x39:{ // _field_array
+                                    string next_guid = node.Attributes?["GUID"]?.Value;
+                                    int array_length = Convert.ToInt32(node.Attributes?["Count"]?.Value);
+                                    int array_struct_size = Convert.ToInt32(loaded_tag.reference_root.SelectSingleNode('_' + next_guid).Attributes?["Size"]?.Value, 16);
+                                    expand_link struct_link = expandus_linkus.child_links[i];
+                                    ArrayParam param = new(param_name, _struct, offset, next_guid, struct_link, array_length, array_struct_size);
+                                    container.Children.Add(param);
+                                    setup_struct_element(struct_link, param, current_line);
+                                    theoretical_line += struct_link.total_contained_lines;
+                                }break;
+                            case 0x40:{ // _field_block_v2
+                                    if (!_struct.tag_block_refs.ContainsKey((ulong)offset))
+                                        break;
+
+                                    expand_link struct_link = expandus_linkus.child_links[i];
+                                    TagblockParam param = new(param_name, _struct.tag_block_refs[(ulong)offset], struct_link);
+                                    container.Children.Add(param);
+                                    setup_struct_element(struct_link, param, current_line);
+                                    theoretical_line += struct_link.total_contained_lines;
+                                }break;
+                            case 0x41:{ // _field_reference_v2
+                                    TagrefParam new_val = new(param_name, _struct.tag_data, offset, main.Active_TagExplorer);
+                                    container.Children.Add(new_val);
+                                }break;
+                            case 0x42:{ // _field_data_v2
+                                    DataParam new_val = new(param_name, _struct.tag_resource_refs[(ulong)offset], _struct.tag_data, offset, param_group_sizes[type]);
+                                    container.Children.Add(new_val);
+                                }break;
+                            case 0x43:{ // tag_resource
+                                    expand_link struct_link = expandus_linkus.child_links[i];
+                                    ResourceParam param = new(param_name, _struct.resource_file_refs[(ulong)offset], struct_link);
+                                    container.Children.Add(param);
+                                    setup_struct_element(struct_link, param, current_line);
+                                    theoretical_line += struct_link.total_contained_lines;
+                                }break;
+                        }
+                    }
+
+
+
+                }
+
+
+                struct_data_block.Size = (uint)total_size;
+                return field_block;
+            }
+            */
         }
 
         public const int tag_header_size = 0x50;
