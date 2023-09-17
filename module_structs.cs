@@ -1141,6 +1141,7 @@ namespace Infinite_module_test{
                                   // NOTE: local offset, not offset across entire datablock, as we localize all offsets to make things easier to work with
                                   // this also applies for all following struct types
                                     tag_def_structure output_struct = new();
+                                    output_struct.Type = 1;
                                     output_struct.FieldBlock = field_block;
                                     output_struct.FieldOffset = (uint)field_offset;
                                     output_struct.Unk_0x12 = 0;
@@ -1306,7 +1307,7 @@ namespace Infinite_module_test{
             [FieldOffset(0x08)] public long   GUID_2;
                                 
             [FieldOffset(0x10)] public ushort  Type;           // "0 = Main Struct, 1 = Tag Block, 2 = Resource, 3 = Custom" NOTE: THERE IS A NUMBER 4, UNKNOWN WHAT ITS PURPOSE IS
-            [FieldOffset(0x12)] public ushort  Unk_0x12;       // likely padding
+            [FieldOffset(0x12)] public ushort  Unk_0x12;       // likely padding 
                                 
             [FieldOffset(0x14)] public int     TargetIndex;    // "For Main Struct and Tag Block structs, the index of the block containing the struct. For Resource structs, this (probably) is the index of the resource. This can be -1 if the tag field doesn't point to anything (null Tag Blocks or Custom structs)."
             [FieldOffset(0x18)] public int     FieldBlock;     // "The index of the data block containing the tag field which refers to this struct. Can be -1 for the Main Struct."
