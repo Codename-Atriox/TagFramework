@@ -44,5 +44,27 @@ namespace Infinite_module_test
         }
 
 
+        public static unsafe int CopyListStructTo<T>(List<T> _struct, byte[] buffer, int offset){
+            int total_size = 0;
+            for (int i = 0; i < _struct.Count(); i++)
+                total_size += CopyStructTo(_struct[i], buffer, offset + (sizeof(T) * i));
+            return total_size; // bit silly to do it this way because we could easily do a multi, but it works and thats enough
+        }
+        public static unsafe int CopyArrayStructTo<T>(T[] _struct, byte[] buffer, int offset){
+            int total_size = 0;
+            for (int i = 0; i < _struct.Length; i++)
+                total_size += CopyStructTo(_struct[i], buffer, offset + (sizeof(T) * i));
+            return total_size; // bit silly to do it this way because we could easily do a multi, but it works and thats enough
+        }
+        public static unsafe int CopyStructTo<T>(T _struct, byte[] buffer, int offset){
+            if (buffer.Length <= sizeof(T) + offset)
+                throw new Exception("not enough room to fit struct into buffer");
+            // do a byte by byte copy, as otherwise we'd need to cast it to a byte array or something for it to work with the regular functions
+            byte* source = (byte*)&_struct;
+            for (int i = 0; i < sizeof(T); i++)
+                buffer[i+offset] = source[i];
+            return sizeof(T);
+        }
+
     }
 }

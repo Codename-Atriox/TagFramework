@@ -579,21 +579,25 @@ namespace Infinite_module_test{
                     //}
                     // read the zoneset header
                     zoneset_info = read_and_convert_to<zoneset_header>(zoneset_header_size, tag_reader);
-                    /* // ZONESETS SEEM TO BE NULLED (BD'd) OUT???
-                    // read all the zoneset instances
-                    zonesets = new zoneset_instance[zoneset_info.ZonesetCount];
-                    // its literally not possible for that to be a null reference, we just set it above
-                    for (int m = 0; m < zonesets.Length; m++) {
-                        // read the header
-                        zonesets[m].header = read_and_convert_to<zoneset_instance_header>(zoneset_instance_header_size);
-                        // read the regular zoneset tags
-                        zonesets[m].zonset_tags = struct_array_assign_bytes<zoneset_tag>(zonesets[m].header.TagCount, zoneset_tag_size);
-                        // read the zoneset footer tags (whatever they are?)
-                        zonesets[m].zonset_footer_tags = struct_array_assign_bytes<zoneset_tag>(zonesets[m].header.FooterCount, zoneset_tag_size);
-                        // read the parents
-                        zonesets[m].zonset_parents = struct_array_assign_bytes<int>(zonesets[m].header.ParentCount, 4);
+                    if (header.ZoneSetDataSize > zoneset_header_size){
+                        // then we must read the children or DIE
+                        // ZONESETS SEEM TO BE NULLED (BD'd) OUT???
+                        // read all the zoneset instances
+                        zonesets = new zoneset_instance[zoneset_info.ZonesetCount];
+                        // its literally not possible for that to be a null reference, we just set it above
+                        for (int m = 0; m < zonesets.Length; m++) {
+                            // read the header
+                            zonesets[m].header = read_and_convert_to<zoneset_instance_header>(zoneset_instance_header_size, tag_reader);
+                            // read the regular zoneset tags
+                            zonesets[m].zonset_tags = struct_array_assign_bytes<zoneset_tag>(zonesets[m].header.TagCount, zoneset_tag_size, tag_reader);
+                            // read the zoneset footer tags (whatever they are?)
+                            zonesets[m].zonset_footer_tags = struct_array_assign_bytes<zoneset_tag>(zonesets[m].header.FooterCount, zoneset_tag_size, tag_reader);
+                            // read the parents
+                            zonesets[m].zonset_parents = struct_array_assign_bytes<int>(zonesets[m].header.ParentCount, 4, tag_reader);
+                        }
+                        // we forgot to read the zoneset header bytes?
+
                     }
-                    */ // we forgot to read the zoneset header bytes?
 
                     // TODO: we need to cast this below read as the rest of the structures, as we're reading this section twice??
 
@@ -904,153 +908,340 @@ namespace Infinite_module_test{
             // ////////////// //
             // TAG COMPILING //
             // //////////// //
-            tag_header output_tag_header; // we'll edit this in a moment, but we want to carry over the unknowns
+            public byte[] compile(){
+                tag_compiler compiler = new(this);
+                return compiler.compile_tag();
+            }
+            class tag_compiler{
+                public tag_compiler(tag __tag){
+                    _tag = __tag;
+                }
+                tag _tag;
 
-            List<data_block> output_data_blocks;
-            List<tag_dependency> output_tag_dependencies;
+                tag_header output_tag_header; // we'll edit this in a moment, but we want to carry over the unknowns
 
-            List<tag_def_structure> output_structs;
-            List<data_reference> output_data_references;
-            List<tag_fixup_reference> output_tag_fixup_references;
-            List<char> stringtable; // we should just null this out as we dont use it
+                List<data_block> output_data_blocks;
+                List<tag_dependency> output_tag_dependencies;
 
-            // we are probably not ever going to use this, so we could probably just export as they are
-            zoneset_header output_zoneset_header;
-            List<zoneset_instance> output_zonest_instances;
-
-            List<byte> output_tagdata;
-            List<byte> output_tag_resource;
-            List<byte> output_actual_tag_resource;
-            
-            public byte[] compile_tag(){
-                if (Initialized == false)
-                    throw new Exception("cannot compile a tag that is not initialized!!");
-
-                output_tag_header = header; // we'll edit this in a moment, but we want to carry over the unknowns
-
-                output_data_blocks = new();
-                // data_blocks
-                output_tag_dependencies = new();
-
-                output_structs = new();
-                output_data_references = new();
-                output_tag_fixup_references = new();
-                stringtable = new(); // we should just nullk this out as we dont use it
+                List<tag_def_structure> output_structs;
+                List<data_reference> output_data_references;
+                List<tag_fixup_reference> output_tag_fixup_references;
+                List<char> stringtable; // we should just null this out as we dont use it
 
                 // we are probably not ever going to use this, so we could probably just export as they are
-                output_zoneset_header = zoneset_info;
-                output_zonest_instances = zonesets.ToList();
+                zoneset_header output_zoneset_header;
+                List<zoneset_instance> output_zonest_instances;
 
-                output_tagdata = new();
-                output_tag_resource = new();
-                output_actual_tag_resource = new();
+                List<byte> output_tagdata;
+                List<byte> output_tag_resource;
+                List<byte> output_actual_tag_resource;
 
-                compile_tagblock(root);
-                return new byte[0];
-            }
+                public byte[] compile_tag() {
+                    if (_tag.Initialized == false)
+                        throw new Exception("cannot compile a tag that is not initialized!!");
+
+                    output_tag_header = _tag.header; // we'll edit this in a moment, but we want to carry over the unknowns
+
+                    output_data_blocks = new();
+                    // data_blocks
+                    output_tag_dependencies = new();
+
+                    output_structs = new();
+                    output_data_references = new();
+                    output_tag_fixup_references = new();
+                    stringtable = new(); // we should just nullk this out as we dont use it
+
+                    // we are probably not ever going to use this, so we could probably just export as they are
+                    output_zoneset_header = _tag.zoneset_info;
+                    output_zonest_instances = _tag.zonesets.ToList();
+
+                    output_tagdata = new();
+                    output_tag_resource = new();
+                    output_actual_tag_resource = new();
+
+                    // create structure header for our root struct
+                    tag_def_structure output_struct = new();
+                    output_struct.FieldBlock = -1; // -1 because it doesn't have a parent block
+                    output_struct.FieldOffset = 0; // idk if this is what we're supposed to default it to or not
+                    output_struct.Unk_0x12 = 0;
+                    output_struct.GUID_1 = Convert.ToInt64(_tag.root.GUID.Substring(0, 16), 16);
+                    output_struct.GUID_2 = Convert.ToInt64(_tag.root.GUID.Substring(16), 16);
+                    output_struct.TargetIndex = 0; // give it index 0, as that will be the first data block we write
+                    output_structs.Add(output_struct);
+
+                    // convert all the organized data back into its compiled blocks
+                    compile_tagblock(_tag.root, 0);
+
+                    // then we want to write all that data into an accurate tag file, which for now we'll just write it all to a byte array
+
+                    // first we'll attempt to calculate the tag size
+                    int tag_size = tag_header_size;
+                    tag_size += tag_dependency_size * output_tag_dependencies.Count();
+                    tag_size += data_block_size * output_data_blocks.Count();
+                    tag_size += tag_def_structure_size * output_structs.Count();
+                    tag_size += data_reference_size * output_data_references.Count();
+                    tag_size += tag_fixup_reference_size * output_tag_fixup_references.Count();
+                    tag_size += stringtable.Count();
+
+                    tag_size += zoneset_header_size;
+                    // we have to go in and count the size of each & every silly zonset thing
+                    foreach (zoneset_instance zoneset_inst in output_zonest_instances) {
+                        tag_size += zoneset_instance_header_size;
+                        // then process each item of the zoneset instance
+                        for (int i = 0; i < zoneset_inst.zonset_tags.Length; i++) tag_size += zoneset_tag_size;
+                        for (int i = 0; i < zoneset_inst.zonset_footer_tags.Length; i++) tag_size += zoneset_tag_size;
+                        for (int i = 0; i < zoneset_inst.zonset_parents.Length; i++) tag_size += 4;
+                    }
+
+                    int total_header_size = tag_size;
+
+                    tag_size += output_tagdata.Count();
+                    tag_size += output_tag_resource.Count();
+                    tag_size += output_actual_tag_resource.Count();
+
+                    // just before we write to bytes, we need to fixup the tag header
+                    // the only things that need changing are item counts & sizes
+                    output_tag_header.DependencyCount = output_tag_dependencies.Count();
+                    output_tag_header.DataBlockCount = output_data_blocks.Count();
+                    output_tag_header.TagStructCount = output_structs.Count();
+                    output_tag_header.DataReferenceCount = output_data_references.Count();
+                    output_tag_header.TagReferenceCount = output_tag_fixup_references.Count();
+                    output_tag_header.StringTableSize = (uint)stringtable.Count();
+
+                    // TODO: WE NEED TO UPDATE THE SIZE OF THE ZONSETS???
+
+                    output_tag_header.HeaderSize = (uint)total_header_size;
+                    output_tag_header.DataSize = (uint)output_tagdata.Count();
+                    output_tag_header.ResourceDataSize = (uint)output_tag_resource.Count();
+                    output_tag_header.ActualResoureDataSize = (uint)output_actual_tag_resource.Count();
+
+                    output_tag_header.HeaderAlignment = 0; // always 0 for some reason
+
+                    if (output_tagdata.Count() > 0) output_tag_header.TagDataAlightment = 2;
+                    else output_tag_header.TagDataAlightment = 0;
+
+                    if (output_tag_resource.Count() > 0) output_tag_header.ResourceDataAligment = 2;
+                    else output_tag_header.ResourceDataAligment = 0;
+
+                    if (output_actual_tag_resource.Count() > 0) output_tag_header.ActualResourceDataAligment = 2;
+                    else output_tag_header.ActualResourceDataAligment = 0;
 
 
+                    // now we start writing
+                    byte[] output = new byte[tag_size];
+                    int current_offset = 0;
+                    current_offset += CopyStructTo(output_tag_header, output, current_offset);
 
-            void compile_struct(XmlNode currentStruct, thing _struct, int field_block, int block_offset)
-            {
+                    current_offset += CopyListStructTo(output_tag_dependencies, output, current_offset);
+                    current_offset += CopyListStructTo(output_data_blocks, output, current_offset);
+                    current_offset += CopyListStructTo(output_structs, output, current_offset);
+                    current_offset += CopyListStructTo(output_data_references, output, current_offset);
+                    current_offset += CopyListStructTo(output_tag_fixup_references, output, current_offset);
+                    current_offset += CopyListStructTo(stringtable, output, current_offset); // empty anyway, so speed does not matter
 
-                for (int i = 0; i < currentStruct.ChildNodes.Count; i++)
-                {
-                    XmlNode node = currentStruct.ChildNodes[i];
+                    // TODO: we need autogenerate these or something idk, we're just copying the data exactly as it was but with way too many extra steps
+
+                    current_offset += CopyStructTo(output_zoneset_header, output, current_offset);
+                    foreach (zoneset_instance zoneset_inst in output_zonest_instances) {
+                        current_offset += CopyStructTo(zoneset_inst.header, output, current_offset);
+                        current_offset += CopyArrayStructTo(zoneset_inst.zonset_tags, output, current_offset);
+                        current_offset += CopyArrayStructTo(zoneset_inst.zonset_footer_tags, output, current_offset);
+                        current_offset += CopyArrayStructTo(zoneset_inst.zonset_parents, output, current_offset);
+                    }
+                    // do a basic block copy on these as its probably quicker
+                    if (output_tagdata.Count() > 0){
+                        byte[] src = output_tagdata.ToArray();
+                        Array.Copy(src, 0, output, current_offset, src.Length);
+                        current_offset += output_tagdata.Count();
+                    }
+                    if (output_tag_resource.Count() > 0){
+                        byte[] src = output_tag_resource.ToArray();
+                        Array.Copy(src, 0, output, current_offset, src.Length);
+                        current_offset += output_tag_resource.Count();
+                    }
+                    if (output_actual_tag_resource.Count() > 0){
+                        byte[] src = output_actual_tag_resource.ToArray();
+                        Array.Copy(src, 0, output, current_offset, src.Length);
+                        current_offset += output_actual_tag_resource.Count(); // potentially unneeded
+                    }
+                    return output;
+                }
+
+                // to get the target index that we're about to allocate, we just count how many data blocks have been allocated, which is also what we do here to get the new index
+                void compile_tagblock(tagdata_struct _struct, int struct_def_index){
+
+                    XmlNode currentStruct = _tag.reference_root.SelectSingleNode("_" + _struct.GUID);
+                    int tagblock_item_size = Convert.ToInt32(currentStruct.Attributes["Size"].Value, 16);
+
+                    data_block struct_data_block = new();
+                    struct_data_block.Section = 1; // tagdata
+                    struct_data_block.Offset = (ulong)output_tagdata.Count(); // gets the current allocated data size
+
+                    int field_block = output_data_blocks.Count(); // gets the next available datablock index
+
+                    // we also need to 
+
+                    // we need to iterate through all the blocks, add up their tagdata & other reference things
+                    int current_offset = 0;
+                    // we have to precompute the size of the data block, so the child blocks do not steal our index
+                    // note we now dont actually need to do that, as we preprocess the tagdata, before compiling the child blocks
+                    struct_data_block.Size = (uint)(_struct.blocks.Count * tagblock_item_size);
+                    output_data_blocks.Add(struct_data_block);
+                    // separate block so we can append all the tagdata first, lest we want our data to get spliced with other data
+                    foreach (thing block in _struct.blocks){
+                        if (tagblock_item_size != block.tag_data.Length)
+                            throw new Exception("tagblock contained data that did not align with expected size!!");
+                        output_tagdata.AddRange(block.tag_data);
+                        current_offset += block.tag_data.Length;
+                    }
+                    current_offset = 0;
+                    foreach (thing block in _struct.blocks){
+                        compile_struct(currentStruct, block, struct_def_index, field_block, current_offset, 0);
+                        current_offset += block.tag_data.Length;
+                    }
+
+                    return;
+                }
+
+                void compile_struct(XmlNode currentStruct, thing _struct, int struct_def_index, int field_block, int block_offset, int relative_offset){
+
+                    for (int i = 0; i < currentStruct.ChildNodes.Count; i++){
+                        XmlNode node = currentStruct.ChildNodes[i];
 
 
-                    int offset = Convert.ToInt32(node.Attributes?["Offset"]?.Value, 16);
-                    int field_offset = block_offset + offset;
+                        int offset = Convert.ToInt32(node.Attributes?["Offset"]?.Value, 16);
+                        int tagblock_offset = relative_offset + offset;
+                        int field_offset = block_offset + offset;
 
-                    int type = Convert.ToInt32(node.Name.Substring(1), 16);
-                    switch (type){
-                        // these two are just for iterating through the structs, we dont actually need to do anything special to compile them
-                        case 0x38:{ // _field_struct 
-                                string next_guid = node.Attributes?["GUID"]?.Value;
-                                XmlNode next_node = reference_root.SelectSingleNode("_" + next_guid);
+                        int type = Convert.ToInt32(node.Name.Substring(1), 16);
+                        switch (type){
+                            // these two are just for iterating through the structs, we dont actually need to do anything special to compile them
+                            case 0x38:{ // _field_struct 
+                                    string next_guid = node.Attributes?["GUID"]?.Value;
+                                    XmlNode next_node = _tag.reference_root.SelectSingleNode("_" + next_guid);
 
-                                compile_struct(next_node, _struct, field_block, field_offset);
-                            } break;
-                        case 0x39:{ // _field_array
-                                int array_length = Convert.ToInt32(node.Attributes?["Count"]?.Value);
+                                    compile_struct(next_node, _struct, struct_def_index, field_block, field_offset, tagblock_offset);
+                                }break;
+                            case 0x39:{ // _field_array
+                                    int array_length = Convert.ToInt32(node.Attributes?["Count"]?.Value);
 
-                                string next_guid = node.Attributes?["GUID"]?.Value;
-                                XmlNode next_node = reference_root.SelectSingleNode("_" + next_guid);
-                                // make sure this is called on the child node not the current node 
-                                int array_struct_size = Convert.ToInt32(next_node.Attributes?["Size"]?.Value, 16);
+                                    string next_guid = node.Attributes?["GUID"]?.Value;
+                                    XmlNode next_node = _tag.reference_root.SelectSingleNode("_" + next_guid);
+                                    // make sure this is called on the child node not the current node 
+                                    int array_struct_size = Convert.ToInt32(next_node.Attributes?["Size"]?.Value, 16);
 
-                                for (int arr_index = 0; arr_index < array_length; arr_index++)
-                                    compile_struct(next_node, _struct, field_block, field_offset + (arr_index * array_struct_size));
-                            } break;
+                                    for (int arr_index = 0; arr_index < array_length; arr_index++){
+                                        int array_offset = arr_index * array_struct_size;
+                                        compile_struct(next_node, _struct, struct_def_index, field_block, field_offset + array_offset, tagblock_offset + array_offset);
+                                }}break;
 
-                        // these 4 all need us to write special stuff into our tag
+                            // these 4 all need us to write special stuff into our tag
 
-                        case 0x40:{ // _field_block_v2
-                                // NOTE: local offset, not offset across entire datablock, as we localize all offsets to make things easier to work with
-                                // this also applies for all following struct types
-                                tag_def_structure output_struct = new();
-                                output_struct.GUID_1 = 0;
-                                output_struct.GUID_2 = 0;
-                                output_struct.FieldBlock = field_block;
-                                output_struct.FieldOffset = (uint)field_offset;
-                                output_struct.Unk_0x12 = 0;
-                                // fill in the target index for the struct
-                                if (_struct.tag_block_refs.ContainsKey((ulong)offset)) 
-                                    output_struct.TargetIndex = compile_tagblock(_struct.tag_block_refs[(ulong)offset]);
-                                // else fill blank for this guy
-                                else output_struct.TargetIndex = -1;
-                            }break;
+                            case 0x40:{ // _field_block_v2
+                                  // NOTE: local offset, not offset across entire datablock, as we localize all offsets to make things easier to work with
+                                  // this also applies for all following struct types
+                                    tag_def_structure output_struct = new();
+                                    output_struct.FieldBlock = field_block;
+                                    output_struct.FieldOffset = (uint)field_offset;
+                                    output_struct.Unk_0x12 = 0;
+                                    // convert guid
+                                    string next_guid = node.Attributes?["GUID"]?.Value;
+                                    output_struct.GUID_1 = Convert.ToInt64(next_guid.Substring(0, 16), 16);
+                                    output_struct.GUID_2 = Convert.ToInt64(next_guid.Substring(16), 16);
+                                    // fill in the target index for the struct
+                                    if (_struct.tag_block_refs.TryGetValue((ulong)tagblock_offset, out var thinger) && thinger.blocks.Count() > 0){
+                                        output_struct.TargetIndex = output_data_blocks.Count();
+                                        int this_struct_def_index = output_structs.Count();
+                                        output_structs.Add(output_struct);
+                                        compile_tagblock(thinger, this_struct_def_index);
+                                    }else{ // else fill blank for this guy
+                                        output_struct.TargetIndex = -1;
+                                        output_structs.Add(output_struct);
+                                }}break;
 
-                        case 0x41:{ // _field_reference_v2
-                                TagrefParam new_val = new(param_name, _struct.tag_data, offset, main.Active_TagExplorer);
-                                container.Children.Add(new_val);
-                            } break;
+                            case 0x41:{ // _field_reference_v2
+                                  // ok screw it, we're just going to read the group and whatever straight from the tagdata at this offset
+                                    uint tagID = BitConverter.ToUInt32(_struct.tag_data[(tagblock_offset + 0x8)..(tagblock_offset + 0xC)]);
+                                    ulong assetID = BitConverter.ToUInt64(_struct.tag_data[(tagblock_offset + 0xC)..(tagblock_offset + 0x14)]);
+                                    int group = BitConverter.ToInt32(_struct.tag_data[(tagblock_offset + 0x14)..(tagblock_offset + 0x18)]);
+                                    // first we need to setup a tagreference thing here
+                                    // then we need to append this to the list of tag dependencies if it isn't already added
 
-                        case 0x42:{ // _field_data_v2
-                                DataParam new_val = new(param_name, _struct.tag_resource_refs[(ulong)offset], _struct.tag_data, offset, param_group_sizes[type]);
-                                container.Children.Add(new_val);
-                            } break;
+                                    int tagref_dependency_index = -1;
+                                    if (tagID != 0xFFFFFFFF && group != -1){
+                                        // see if we already have it listed
+                                        for (int dep_index = 0; dep_index < output_tag_dependencies.Count; dep_index++)
+                                            if (output_tag_dependencies[dep_index].GlobalID == tagID){
+                                                tagref_dependency_index = dep_index;
+                                                break;
+                                            }
+                                        // otherwise we'll add a new entry for the dependency 
+                                        if (tagref_dependency_index == -1){
+                                            tag_dependency tag_dep = new();
+                                            tag_dep.GlobalID = tagID;
+                                            tag_dep.AssetID = assetID;
+                                            tag_dep.GroupTag = group;
+                                            // these are both unused i believe
+                                            tag_dep.NameOffset = 0;
+                                            tag_dep.Unk_0x14 = 0;
 
-                        case 0x43:{ // tag_resource
-                                expand_link struct_link = expandus_linkus.child_links[i];
-                                ResourceParam param = new(param_name, _struct.resource_file_refs[(ulong)offset], struct_link);
-                                container.Children.Add(param);
-                                setup_struct_element(struct_link, param, current_line);
-                                theoretical_line += struct_link.total_contained_lines;
-                            } break;
+                                            tagref_dependency_index = output_tag_dependencies.Count;
+                                            output_tag_dependencies.Add(tag_dep);
+                                    }}
+                                    tag_fixup_reference tag_ref = new();
+                                    tag_ref.DepdencyIndex = tagref_dependency_index;
+                                    tag_ref.FieldBlock = field_block;
+                                    tag_ref.FieldOffset = (uint)field_offset;
+                                    // unused
+                                    tag_ref.NameOffset = 0;
+
+                                    // then add to list
+                                    output_tag_fixup_references.Add(tag_ref);
+                                }break;
+
+                            case 0x42:{ // _field_data_v2
+                                    data_reference output_struct = new();
+
+                                    output_struct.FieldBlock = field_block;
+                                    output_struct.FieldOffset = (uint)field_offset;
+                                    output_struct.ParentStructIndex = struct_def_index; // we had to pass this along just so this guy could have it, seems a little useless though
+                                    // probably unused? im not sure what this is for
+                                    output_struct.Unk_0x04 = 0;
+                                    // fill in the target index for the struct
+                                    if (_struct.tag_resource_refs.TryGetValue((ulong)tagblock_offset, out var data_resource) && data_resource.Length > 0){
+                                        // gets the next available datablock index
+                                        output_struct.TargetIndex = output_data_blocks.Count();
+
+                                        // then generate a new data block for this guy
+                                        data_block struct_data_block = new();
+                                        struct_data_block.Section = 2; // resource data
+                                        struct_data_block.Offset = (ulong)output_tag_resource.Count(); // gets the current allocated resource data size
+                                        struct_data_block.Size = (uint)data_resource.Length;
+                                        struct_data_block.Unk_0x04 = 0; // unused probably?
+                                        // append data to our data thingo
+                                        output_tag_resource.AddRange(data_resource);
+                                        // then add our new data block to the list
+                                        output_data_blocks.Add(struct_data_block);
+                                    }
+                                    // else fill blank for this guy
+                                    else output_struct.TargetIndex = -1;
+                                    output_data_references.Add(output_struct);
+
+                                }break;
+
+                            case 0x43:{ // tag_resource
+                                    throw new Exception("resource compiling is not yet supported!!");
+
+                                    // we cant actually do anything with the resources yet, because we need a system to beable to tell what to do when we d/dont have chunked resources
+                                    // we should split up the resource data into lists of byte arrays, so we can then effectively offload the resources without having to know whether they're chunked or not
+                                    // although still, we would need to generate a new tag for non-chunked resources so idk just yet
+                                }break;
+                        }
                     }
                 }
+
+                
             }
-            int compile_tagblock(tagdata_struct _struct){
-
-                XmlNode currentStruct = reference_root.SelectSingleNode("_" + _struct.GUID);
-                int referenced_array_size = Convert.ToInt32(currentStruct.Attributes["Size"].Value, 16);
-
-                data_block struct_data_block = new();
-                struct_data_block.Section = 1; // tagdata
-                struct_data_block.Offset = (ulong)output_tagdata.Count(); // gets the current allocated data size
-
-                int field_block = output_data_blocks.Count(); // gets the next available datablock index
-
-
-
-                // we need to iterate through all the blocks, add up their tagdata & other reference things
-                int total_size = 0;
-                foreach (thing block in _struct.blocks){
-
-                    compile_struct(currentStruct, block, );
-                    total_size += block.tag_data.Length;
-
-
-
-
-                }
-
-
-                struct_data_block.Size = (uint)total_size;
-                return field_block;
-            }
-            
         }
 
         public const int tag_header_size = 0x50;
@@ -1061,18 +1252,18 @@ namespace Infinite_module_test{
             [FieldOffset(0x08)] public ulong   Unk_0x08; 
             [FieldOffset(0x10)] public ulong   AssetChecksum;  
             // these cant be uints because of how the code is setup, should probably assert if -1
-            [FieldOffset(0x18)] public int     DependencyCount; 
-            [FieldOffset(0x1C)] public int     DataBlockCount;  
+            [FieldOffset(0x18)] public int     DependencyCount; // NOT CORRECT
+            [FieldOffset(0x1C)] public int     DataBlockCount;  // NOT CORRECT
             [FieldOffset(0x20)] public int     TagStructCount; 
             [FieldOffset(0x24)] public int     DataReferenceCount; 
             [FieldOffset(0x28)] public int     TagReferenceCount; 
                                 
-            [FieldOffset(0x2C)] public uint    StringTableSize; 
+            [FieldOffset(0x2C)] public uint    StringTableSize; // NOT CORRECT (doesnt need to be)
                                 
             [FieldOffset(0x30)] public uint    ZoneSetDataSize;    // this is the literal size in bytes
             [FieldOffset(0x34)] public uint    Unk_0x34; // new with infinite, cold be an enum of how to read the alignment bytes // seems to be chunked resource file count
                                 
-            [FieldOffset(0x38)] public uint    HeaderSize; 
+            [FieldOffset(0x38)] public uint    HeaderSize; // NOT CORRECT
             [FieldOffset(0x3C)] public uint    DataSize; 
             [FieldOffset(0x40)] public uint    ResourceDataSize; 
             [FieldOffset(0x44)] public uint    ActualResoureDataSize;  // also new with infinite
@@ -1090,11 +1281,11 @@ namespace Infinite_module_test{
         [StructLayout(LayoutKind.Explicit, Size = tag_dependency_size)] public struct tag_dependency // this struct looks just like a regular tag reference
         {
             [FieldOffset(0x00)] public int     GroupTag;
-            [FieldOffset(0x04)] public uint    NameOffset;
+            [FieldOffset(0x04)] public uint    NameOffset; // NOT CORRECT (doesn't need to be)
                                 
-            [FieldOffset(0x08)] public long    AssetID;
-            [FieldOffset(0x10)] public int     GlobalID;
-            [FieldOffset(0x14)] public int     Unk_0x14;   // possibly padding?
+            [FieldOffset(0x08)] public ulong   AssetID;
+            [FieldOffset(0x10)] public uint    GlobalID;
+            [FieldOffset(0x14)] public int     Unk_0x14;  // NOT CORRECT (it seems to always be -1) // possibly padding?
         }
 
         public const int data_block_size = 0x10;
