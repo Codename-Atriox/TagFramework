@@ -531,6 +531,13 @@ namespace Infinite_module_test{
                     dependencies = struct_array_assign_bytes<tag_dependency>(header.DependencyCount, tag_dependency_size, tag_reader);
                     // read tag data blocks
                     data_blocks = struct_array_assign_bytes<data_block>(header.DataBlockCount, data_block_size, tag_reader);
+                    foreach (var var in data_blocks)
+                    {
+                        if (var.Section == 0)
+                        {
+
+                        }
+                    }
                     // read tag ref structures
                     tag_structs = struct_array_assign_bytes<tag_def_structure>(header.TagStructCount, tag_def_structure_size, tag_reader);
                     // process that array into a faster dictionary
@@ -801,10 +808,6 @@ namespace Infinite_module_test{
                                 {
                                     data_block data_data = data_blocks[data_header.TargetIndex];
                                     byte[] data_bytes = return_referenced_byte_segment(data_data.Section).Skip((int)data_data.Offset).Take((int)data_data.Size).ToArray();
-                                    if (data_data.Unk_0x04 != 0)
-                                    {
-
-                                    }
                                     append_to.tag_resource_refs.Add(tagblock_constant_offset, data_bytes);
                                 }
                                 else append_to.tag_resource_refs.Add(tagblock_constant_offset, new byte[0]);
@@ -963,7 +966,7 @@ namespace Infinite_module_test{
                     tag_def_structure output_struct = new();
                     output_struct.FieldBlock = -1; // -1 because it doesn't have a parent block
                     output_struct.FieldOffset = 0; // idk if this is what we're supposed to default it to or not
-                    output_struct.Unk_0x12 = 0;
+                    output_struct.Unk_0x12 = 1; // this is seemingly set to 1 for the root struct and no other struct? maybe its also set for the first struct inside a resource??
                     output_struct.GUID_1 = Convert.ToInt64(_tag.root.GUID.Substring(0, 16), 16);
                     output_struct.GUID_2 = Convert.ToInt64(_tag.root.GUID.Substring(16), 16);
                     output_struct.TargetIndex = 0; // give it index 0, as that will be the first data block we write
@@ -1017,14 +1020,18 @@ namespace Infinite_module_test{
 
                     output_tag_header.HeaderAlignment = 0; // always 0 for some reason
 
-                    if (output_tagdata.Count() > 0) output_tag_header.TagDataAlightment = 2;
-                    else output_tag_header.TagDataAlightment = 0;
+                    output_tag_header.TagDataAlightment = 2;
+                    output_tag_header.ResourceDataAligment = 2;
+                    output_tag_header.ActualResourceDataAligment = 2;
+                    // we just going to align everything by 2 for now, which i assume means min packing size of 4 bytes
+                    //if (output_tagdata.Count() > 0) output_tag_header.TagDataAlightment = 2;
+                    //else output_tag_header.TagDataAlightment = _tag.header.TagDataAlightment;
 
-                    if (output_tag_resource.Count() > 0) output_tag_header.ResourceDataAligment = 2;
-                    else output_tag_header.ResourceDataAligment = 0;
+                    //if (output_tag_resource.Count() > 0) output_tag_header.ResourceDataAligment = 2;
+                    //else output_tag_header.ResourceDataAligment = _tag.header.TagDataAlightment;
 
-                    if (output_actual_tag_resource.Count() > 0) output_tag_header.ActualResourceDataAligment = 2;
-                    else output_tag_header.ActualResourceDataAligment = 0;
+                    //if (output_actual_tag_resource.Count() > 0) output_tag_header.ActualResourceDataAligment = 2;
+                    //else output_tag_header.ActualResourceDataAligment = _tag.header.TagDataAlightment;
 
 
                     // now we start writing
@@ -1079,13 +1086,18 @@ namespace Infinite_module_test{
 
                     int field_block = output_data_blocks.Count(); // gets the next available datablock index
 
-                    // we also need to 
+
 
                     // we need to iterate through all the blocks, add up their tagdata & other reference things
                     int current_offset = 0;
                     // we have to precompute the size of the data block, so the child blocks do not steal our index
                     // note we now dont actually need to do that, as we preprocess the tagdata, before compiling the child blocks
                     struct_data_block.Size = (uint)(_struct.blocks.Count * tagblock_item_size);
+
+                    // we also need to check whether the size matches with tagdata alignment
+                    if ((struct_data_block.Size & 0b11) != 0)
+                        throw new Exception("tagdata does not meet 0b100 alignemnt!!");
+
                     output_data_blocks.Add(struct_data_block);
                     // separate block so we can append all the tagdata first, lest we want our data to get spliced with other data
                     foreach (thing block in _struct.blocks){
@@ -1168,8 +1180,11 @@ namespace Infinite_module_test{
                                     // first we need to setup a tagreference thing here
                                     // then we need to append this to the list of tag dependencies if it isn't already added
 
+                                    // we have to check for the flag that determines whether the tagref is not allowed to be appended to dependencies?
+                                    int tagref_flags = Convert.ToInt32(node.Attributes?["Flags"]?.Value);
+
                                     int tagref_dependency_index = -1;
-                                    if (tagID != 0xFFFFFFFF && group != -1){
+                                    if (tagID != 0xFFFFFFFF && group != -1 && ((tagref_flags & 0x10) == 0)){
                                         // see if we already have it listed
                                         for (int dep_index = 0; dep_index < output_tag_dependencies.Count; dep_index++)
                                             if (output_tag_dependencies[dep_index].GlobalID == tagID){
@@ -1184,7 +1199,7 @@ namespace Infinite_module_test{
                                             tag_dep.GroupTag = group;
                                             // these are both unused i believe
                                             tag_dep.NameOffset = 0;
-                                            tag_dep.Unk_0x14 = 0;
+                                            tag_dep.Unk_0x14 = -1; // what is this even for, it must be an index if most have -1
 
                                             tagref_dependency_index = output_tag_dependencies.Count;
                                             output_tag_dependencies.Add(tag_dep);
@@ -1215,12 +1230,32 @@ namespace Infinite_module_test{
 
                                         // then generate a new data block for this guy
                                         data_block struct_data_block = new();
-                                        struct_data_block.Section = 2; // resource data
-                                        struct_data_block.Offset = (ulong)output_tag_resource.Count(); // gets the current allocated resource data size
                                         struct_data_block.Size = (uint)data_resource.Length;
-                                        struct_data_block.Unk_0x04 = 0; // unused probably?
-                                        // append data to our data thingo
-                                        output_tag_resource.AddRange(data_resource);
+
+                                        // accoding to the alignemnt system, we need to make sure the data is aligned correctly
+                                        // so we have to add padding if the offset is not quite even
+                                        int padding = output_tagdata.Count() % 4;
+                                        for (int padi = 0; padi < padding; padi++)
+                                            output_tagdata.Add(0);
+
+                                        struct_data_block.Padding = (ushort)padding; 
+                                        // determine which section this belongs to
+                                        int probable_section = Convert.ToInt32(node.Attributes?["Int2"]?.Value);
+                                        if (probable_section == 0){ // tagdata section
+                                            struct_data_block.Section = 1; 
+                                            struct_data_block.Offset = (ulong)output_tagdata.Count(); 
+                                            output_tagdata.AddRange(data_resource);
+                                        } else if (probable_section == 2){ // resource data section
+                                            struct_data_block.Section = 2;
+                                            struct_data_block.Offset = (ulong)output_tag_resource.Count(); 
+                                            output_tag_resource.AddRange(data_resource);
+                                        } else if (probable_section == 4){ // actual resource data section
+                                            struct_data_block.Section = 3;
+                                            struct_data_block.Offset = (ulong)output_actual_tag_resource.Count();
+                                            output_actual_tag_resource.AddRange(data_resource);
+                                        }
+                                        else throw new Exception("unkown int2 section index??");
+
                                         // then add our new data block to the list
                                         output_data_blocks.Add(struct_data_block);
                                     }
@@ -1253,8 +1288,8 @@ namespace Infinite_module_test{
             [FieldOffset(0x08)] public ulong   Unk_0x08; 
             [FieldOffset(0x10)] public ulong   AssetChecksum;  
             // these cant be uints because of how the code is setup, should probably assert if -1
-            [FieldOffset(0x18)] public int     DependencyCount; // NOT CORRECT
-            [FieldOffset(0x1C)] public int     DataBlockCount;  // NOT CORRECT
+            [FieldOffset(0x18)] public int     DependencyCount;
+            [FieldOffset(0x1C)] public int     DataBlockCount;  
             [FieldOffset(0x20)] public int     TagStructCount; 
             [FieldOffset(0x24)] public int     DataReferenceCount; 
             [FieldOffset(0x28)] public int     TagReferenceCount; 
@@ -1264,7 +1299,7 @@ namespace Infinite_module_test{
             [FieldOffset(0x30)] public uint    ZoneSetDataSize;    // this is the literal size in bytes
             [FieldOffset(0x34)] public uint    Unk_0x34; // new with infinite, cold be an enum of how to read the alignment bytes // seems to be chunked resource file count
                                 
-            [FieldOffset(0x38)] public uint    HeaderSize; // NOT CORRECT
+            [FieldOffset(0x38)] public uint    HeaderSize; // NOT CORRECT? because we're excluding that random data?
             [FieldOffset(0x3C)] public uint    DataSize; 
             [FieldOffset(0x40)] public uint    ResourceDataSize; 
             [FieldOffset(0x44)] public uint    ActualResoureDataSize;  // also new with infinite
@@ -1293,7 +1328,7 @@ namespace Infinite_module_test{
         [StructLayout(LayoutKind.Explicit, Size = data_block_size)] public struct data_block
         {
             [FieldOffset(0x00)] public uint    Size;
-            [FieldOffset(0x04)] public ushort  Unk_0x04;   // "(0 - 14, probably an enum)", potentially the index of the resource file
+            [FieldOffset(0x04)] public ushort  Padding;   // how many unused bytes come before the offset, probably for if you were to read 
                                 
             [FieldOffset(0x06)] public ushort  Section;    // "0 = Header, 1 = Tag Data, 2 = Resource Data" 3 would be that actual resource thingo
             [FieldOffset(0x08)] public ulong   Offset;     // "The offset of the start of the data block, relative to the start of its section."
