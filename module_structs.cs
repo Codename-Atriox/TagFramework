@@ -672,8 +672,7 @@ namespace Infinite_module_test{
                 return true;
                 
             }
-            public class tagdata_struct
-            {
+            public class tagdata_struct{
                 // GUID needed, as we'll use that to figure out which struct to reference when interpretting the byte array
                 public string GUID;
                 public List<thing> blocks = new();
@@ -911,13 +910,26 @@ namespace Infinite_module_test{
             // ////////////// //
             // TAG COMPILING //
             // //////////// //
-            public byte[] compile(){
+            public struct compiled_tag{
+                public uint tagID;
+                public byte[] tag_bytes;
+                public List<byte[]> resource_bytes;
+            }
+            public compiled_tag compile(){
                 tag_compiler compiler = new(this);
-                return compiler.compile_tag();
+                return compiler.get_compiled_data();
             }
             class tag_compiler{
                 public tag_compiler(tag __tag){
                     _tag = __tag;
+                }
+                compiled_tag output_compiled_tag;
+                public compiled_tag get_compiled_data(){
+                    output_compiled_tag.resource_bytes = new(); // im starting to think we dont actually need to initialize these kinda things??
+                    output_compiled_tag.tag_bytes = compile_tag(_tag.root, false);
+                    // ok and then we spit out the chunk resources if we have any i guess
+
+                    return output_compiled_tag;
                 }
                 tag _tag;
 
@@ -939,11 +951,14 @@ namespace Infinite_module_test{
                 List<byte> output_tag_resource;
                 List<byte> output_actual_tag_resource;
 
-                public byte[] compile_tag() {
+                private bool? are_resources_chunked = null; // used to detect inconsistencies in the resource files or something like that
+
+                // we need to support compiling tag segements, meainging we need to take root struct as a variable, so we can target resources
+                private byte[] compile_tag(tagdata_struct at_struct, bool resource_mode) {
                     if (_tag.Initialized == false)
                         throw new Exception("cannot compile a tag that is not initialized!!");
 
-                    output_tag_header = _tag.header; // we'll edit this in a moment, but we want to carry over the unknowns
+                    output_tag_header = _tag.header; // we'll edit this in a moment, but we want to carry over the unknowns + defaults
 
                     output_data_blocks = new();
                     // data_blocks
@@ -955,8 +970,15 @@ namespace Infinite_module_test{
                     stringtable = new(); // we should just nullk this out as we dont use it
 
                     // we are probably not ever going to use this, so we could probably just export as they are
-                    output_zoneset_header = _tag.zoneset_info;
-                    output_zonest_instances = _tag.zonesets.ToList();
+                    // if we're compiling a resource, then we probably do not want to inherit zonset data
+                    if (resource_mode){
+                        // already nulled or something // output_zoneset_header;
+                        output_zonest_instances = new();
+                    } else{
+                        output_zoneset_header = _tag.zoneset_info;
+                        output_zonest_instances = _tag.zonesets.ToList();
+                    }
+
 
                     output_tagdata = new();
                     output_tag_resource = new();
@@ -967,13 +989,13 @@ namespace Infinite_module_test{
                     output_struct.FieldBlock = -1; // -1 because it doesn't have a parent block
                     output_struct.FieldOffset = 0; // idk if this is what we're supposed to default it to or not
                     output_struct.Unk_0x12 = 1; // this is seemingly set to 1 for the root struct and no other struct? maybe its also set for the first struct inside a resource??
-                    output_struct.GUID_1 = Convert.ToInt64(_tag.root.GUID.Substring(0, 16), 16);
-                    output_struct.GUID_2 = Convert.ToInt64(_tag.root.GUID.Substring(16), 16);
+                    output_struct.GUID_1 = Convert.ToInt64(at_struct.GUID.Substring(0, 16), 16);
+                    output_struct.GUID_2 = Convert.ToInt64(at_struct.GUID.Substring(16), 16);
                     output_struct.TargetIndex = 0; // give it index 0, as that will be the first data block we write
                     output_structs.Add(output_struct);
 
                     // convert all the organized data back into its compiled blocks
-                    compile_tagblock(_tag.root, 0);
+                    compile_tagblock(at_struct, 0);
 
                     // then we want to write all that data into an accurate tag file, which for now we'll just write it all to a byte array
 
@@ -1268,7 +1290,7 @@ namespace Infinite_module_test{
                             case 0x43:{ // tag_resource
                                     throw new Exception("resource compiling is not yet supported!!");
 
-                                    // we cant actually do anything with the resources yet, because we need a system to beable to tell what to do when we d/dont have chunked resources
+                                    // we cant actually do anything with the resources yet, because we need a system to beable to tell what to do when we do/dont have chunked resources
                                     // we should split up the resource data into lists of byte arrays, so we can then effectively offload the resources without having to know whether they're chunked or not
                                     // although still, we would need to generate a new tag for non-chunked resources so idk just yet
                                 }break;
