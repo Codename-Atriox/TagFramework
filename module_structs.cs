@@ -484,6 +484,21 @@ namespace Infinite_module_test{
                 reference_root = _reference_root;
 
                 plugin_path = _plugin_path;
+
+                if (resources == null) return; // if no resources then we dont need to iterate, this will mostly be for the non chunked resources i think
+                // iterate through all resource files & ensure they are all the same type, or throw error
+                for (int i = 0; i < resources.Count; i++)
+                {
+                    // note that the array sets the bool as true when the resource is a standalone tag, AKA not chunked
+                    // so we have to inverse that boolen when doing comparisons here, as we want to know whether its chunked (true)
+                    bool is_chunked = !resources[i].Value;
+
+                    // first index sets what resource type we're using, the next ones
+                    if (i == 0) are_resources_chunked = is_chunked;
+                    else if (are_resources_chunked != is_chunked)
+                        throw new Exception("some resource files were not of matching type (chunked/standalone)!! this probably shouldn't happen ever");
+
+                }
             }
             // load tag outputs
             public bool Initialized = false;
@@ -493,9 +508,11 @@ namespace Infinite_module_test{
             string plugin_path;
             //
             XmlDocument reference_xml;
-            // resource path, is whole file
+            // resource path, is whole file (aka non-chunked)
             List<KeyValuePair<byte[], bool>> resource_list;
+            bool are_resources_chunked = false; // default as using non-chunked resources, as most tags that use non-chunked have a possibility to have no resources
             int processed_resource_index = 0; // we use this to keep track of which files we've opened
+
             private T read_and_convert_to<T>(int read_length, MemoryStream tag_reader) {
                 byte[] bytes = new byte[read_length];
                 tag_reader.Read(bytes, 0, read_length);
@@ -822,6 +839,10 @@ namespace Infinite_module_test{
                                 string struct_guid = currentParam.Attributes["GUID"].Value;
                                 ulong param_offset = data_block_offset + data_blocks[tag_structs[struct_index].TargetIndex].Offset;
                                 int resource_type = read_int_from_array_at(data_blocks[tag_structs[struct_index].TargetIndex].Section, (int)(param_offset + 12));
+                                int debug = data_blocks[tag_structs[struct_index].TargetIndex].Section;
+                                if (debug != 1)
+                                    throw new Exception("Debug!!!");
+
                                 if (resource_type == 0)  // external tag resource type // UNKOWN HOW TO READ AS OF RIGHT NOW
                                 {
                                     //uint resource_struct_index = struct_links[struct_index][(uint)data_block_offset];
@@ -831,7 +852,8 @@ namespace Infinite_module_test{
                                     //string bitles = BitConverter.ToString(data_bytes).Replace('-', ' ');
                                     if (resource_index == -1)
                                     { // empty resource reference
-                                        append_to.resource_file_refs.Add(tagblock_constant_offset, null);
+                                        // do not append reference if it doesn't exist???
+                                        //append_to.resource_file_refs.Add(tagblock_constant_offset, null);
                                         continue;
                                     }
                                     if (processed_resource_index >= resource_list.Count)
@@ -928,7 +950,12 @@ namespace Infinite_module_test{
                     output_compiled_tag.resource_bytes = new(); // im starting to think we dont actually need to initialize these kinda things??
                     output_compiled_tag.tag_bytes = compile_tag(_tag.root, false);
                     // ok and then we spit out the chunk resources if we have any i guess
-
+                    foreach (var v in _tag.resource_list){
+                        // i dont think we need to validate whehter the bools are all matching or not, because we do that when we load the tag
+                        // however we would have to check whats up when we're adding new resources i think
+                        if (v.Value == false) // is a chunked file
+                            output_compiled_tag.resource_bytes.Add(v.Key);
+                    }
                     return output_compiled_tag;
                 }
                 tag _tag;
@@ -951,7 +978,6 @@ namespace Infinite_module_test{
                 List<byte> output_tag_resource;
                 List<byte> output_actual_tag_resource;
 
-                private bool? are_resources_chunked = null; // used to detect inconsistencies in the resource files or something like that
 
                 // we need to support compiling tag segements, meainging we need to take root struct as a variable, so we can target resources
                 private byte[] compile_tag(tagdata_struct at_struct, bool resource_mode) {
@@ -1104,10 +1130,18 @@ namespace Infinite_module_test{
 
                     data_block struct_data_block = new();
                     struct_data_block.Section = 1; // tagdata
+
+                    // we also need to check whether the size matches with tagdata alignment
+                    //if ((struct_data_block.Size & 0b11) != 0)
+                    //    throw new Exception("tagdata does not meet 0b100 alignemnt!!");
+                    // caculate padding
+                    int padding = output_tagdata.Count() % 4;
+                    for (int padi = 0; padi < padding; padi++) output_tagdata.Add(0);
+                    struct_data_block.Padding = (ushort)padding;
+
+                    // then we can assign the offset & size and whatever else
                     struct_data_block.Offset = (ulong)output_tagdata.Count(); // gets the current allocated data size
-
                     int field_block = output_data_blocks.Count(); // gets the next available datablock index
-
 
 
                     // we need to iterate through all the blocks, add up their tagdata & other reference things
@@ -1115,11 +1149,6 @@ namespace Infinite_module_test{
                     // we have to precompute the size of the data block, so the child blocks do not steal our index
                     // note we now dont actually need to do that, as we preprocess the tagdata, before compiling the child blocks
                     struct_data_block.Size = (uint)(_struct.blocks.Count * tagblock_item_size);
-
-                    // we also need to check whether the size matches with tagdata alignment
-                    if ((struct_data_block.Size & 0b11) != 0)
-                        throw new Exception("tagdata does not meet 0b100 alignemnt!!");
-
                     output_data_blocks.Add(struct_data_block);
                     // separate block so we can append all the tagdata first, lest we want our data to get spliced with other data
                     foreach (thing block in _struct.blocks){
@@ -1256,22 +1285,33 @@ namespace Infinite_module_test{
 
                                         // accoding to the alignemnt system, we need to make sure the data is aligned correctly
                                         // so we have to add padding if the offset is not quite even
-                                        int padding = output_tagdata.Count() % 4;
-                                        for (int padi = 0; padi < padding; padi++)
-                                            output_tagdata.Add(0);
-
-                                        struct_data_block.Padding = (ushort)padding; 
+                                        
                                         // determine which section this belongs to
                                         int probable_section = Convert.ToInt32(node.Attributes?["Int2"]?.Value);
                                         if (probable_section == 0){ // tagdata section
+                                            // caculate padding
+                                            int padding = output_tagdata.Count() % 4;
+                                            for (int padi = 0; padi < padding; padi++) output_tagdata.Add(0);
+                                            struct_data_block.Padding = (ushort)padding;
+                                            // write data
                                             struct_data_block.Section = 1; 
                                             struct_data_block.Offset = (ulong)output_tagdata.Count(); 
                                             output_tagdata.AddRange(data_resource);
                                         } else if (probable_section == 2){ // resource data section
+                                            // caculate padding
+                                            int padding = output_tag_resource.Count() % 4;
+                                            for (int padi = 0; padi < padding; padi++) output_tag_resource.Add(0);
+                                            struct_data_block.Padding = (ushort)padding;
+                                            // write data
                                             struct_data_block.Section = 2;
                                             struct_data_block.Offset = (ulong)output_tag_resource.Count(); 
                                             output_tag_resource.AddRange(data_resource);
                                         } else if (probable_section == 4){ // actual resource data section
+                                            // caculate padding
+                                            int padding = output_actual_tag_resource.Count() % 4;
+                                            for (int padi = 0; padi < padding; padi++) output_actual_tag_resource.Add(0);
+                                            struct_data_block.Padding = (ushort)padding;
+                                            // write data
                                             struct_data_block.Section = 3;
                                             struct_data_block.Offset = (ulong)output_actual_tag_resource.Count();
                                             output_actual_tag_resource.AddRange(data_resource);
@@ -1288,11 +1328,41 @@ namespace Infinite_module_test{
                                 }break;
 
                             case 0x43:{ // tag_resource
-                                    throw new Exception("resource compiling is not yet supported!!");
+                                    tag_def_structure output_struct = new();
+                                    output_struct.FieldBlock = field_block;
+                                    output_struct.FieldOffset = (uint)field_offset;
+                                    output_struct.Unk_0x12 = 0;
+                                    // convert guid
+                                    string next_guid = node.Attributes?["GUID"]?.Value;
+                                    output_struct.GUID_1 = Convert.ToInt64(next_guid.Substring(0, 16), 16);
+                                    output_struct.GUID_2 = Convert.ToInt64(next_guid.Substring(16), 16);
 
-                                    // we cant actually do anything with the resources yet, because we need a system to beable to tell what to do when we do/dont have chunked resources
-                                    // we should split up the resource data into lists of byte arrays, so we can then effectively offload the resources without having to know whether they're chunked or not
-                                    // although still, we would need to generate a new tag for non-chunked resources so idk just yet
+                                    int is_chunked = BitConverter.ToInt32(_struct.tag_data[(tagblock_offset + 12)..(tagblock_offset + 16)]);
+                                    if (is_chunked == 0){
+                                        output_struct.Type = 2; // for standalone tag resource
+                                        // then we have to process this as a mini/standalone tag?
+                                        // load subtag as bytes, & set target index if valid
+                                        if (_struct.resource_file_refs.TryGetValue((ulong)tagblock_offset, out var thinger) && thinger.blocks.Count() > 0){
+                                            tag_compiler resource_compiler = new(_tag);
+                                            byte[] resource_bytes = resource_compiler.compile_tag(thinger, true);
+                                            output_struct.TargetIndex = 0; // apparently we dont index the resource or anything
+                                            output_compiled_tag.resource_bytes.Add(resource_bytes);
+                                        // else we do not assign a valid resource for this guy
+                                        }else output_struct.TargetIndex = -1;
+                                        output_structs.Add(output_struct); // both dont interfere with the order so we can run this after
+                                    } else{
+                                        output_struct.Type = 3; // for chunked resource
+                                        // otherwise this is just a chunk file resource, and we'll append the resource in the main compile function
+                                        // and the struct itself is contained within the main tag file, so just pretend this is a tagblock basically
+                                        // fill in the target index for the struct
+                                        if (_struct.resource_file_refs.TryGetValue((ulong)tagblock_offset, out var thinger) && thinger.blocks.Count() > 0){
+                                            output_struct.TargetIndex = output_data_blocks.Count();
+                                            int this_struct_def_index = output_structs.Count();
+                                            output_structs.Add(output_struct); // to match the order, we have to do this before compiling the tagblock
+                                            compile_tagblock(thinger, this_struct_def_index);
+                                        // else somehow this resource is empty, we should probably throw an exception
+                                        }else throw new Exception("chunked resources should NOT be empty!!"); // output_struct.TargetIndex = -1;
+                                    }
                                 }break;
                         }
                     }
@@ -1350,7 +1420,7 @@ namespace Infinite_module_test{
         [StructLayout(LayoutKind.Explicit, Size = data_block_size)] public struct data_block
         {
             [FieldOffset(0x00)] public uint    Size;
-            [FieldOffset(0x04)] public ushort  Padding;   // how many unused bytes come before the offset, probably for if you were to read 
+            [FieldOffset(0x04)] public ushort  Padding;   // how many unused bytes come before the offset, probably for if you were to read the file without jumping offsets or something
                                 
             [FieldOffset(0x06)] public ushort  Section;    // "0 = Header, 1 = Tag Data, 2 = Resource Data" 3 would be that actual resource thingo
             [FieldOffset(0x08)] public ulong   Offset;     // "The offset of the start of the data block, relative to the start of its section."
@@ -1362,8 +1432,8 @@ namespace Infinite_module_test{
             //byte[16] GUID; // 0x00 // ok lets not attempt to use a byte array then
             [FieldOffset(0x00)] public long   GUID_1;
             [FieldOffset(0x08)] public long   GUID_2;
-                                
-            [FieldOffset(0x10)] public ushort  Type;           // "0 = Main Struct, 1 = Tag Block, 2 = Resource, 3 = Custom" NOTE: THERE IS A NUMBER 4, UNKNOWN WHAT ITS PURPOSE IS
+            // ok, so 0 is the main struct, 1 is a tagblock struct, 2 is a non-chunked resource, 3 is chunked resource, 4 is for literal structs (useless?)
+            [FieldOffset(0x10)] public ushort  Type;           // "0 = Main Struct, 1 = Tag Block, 2 = Resource, 3 = Custom" 4 seems to be for notable structs (like render geo) idk if we need to include it though
             [FieldOffset(0x12)] public ushort  Unk_0x12;       // likely padding 
                                 
             [FieldOffset(0x14)] public int     TargetIndex;    // "For Main Struct and Tag Block structs, the index of the block containing the struct. For Resource structs, this (probably) is the index of the resource. This can be -1 if the tag field doesn't point to anything (null Tag Blocks or Custom structs)."
