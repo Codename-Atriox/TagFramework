@@ -1413,7 +1413,7 @@ namespace Infinite_module_test{
                                 
             [FieldOffset(0x08)] public ulong   AssetID;
             [FieldOffset(0x10)] public uint    GlobalID;
-            [FieldOffset(0x14)] public int     Unk_0x14;  // NOT CORRECT (it seems to always be -1) // possibly padding?
+            [FieldOffset(0x14)] public int     Unk_0x14;  // (it seems to always be -1) // possibly padding?
         }
 
         public const int data_block_size = 0x10;
