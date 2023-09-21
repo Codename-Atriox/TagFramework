@@ -87,24 +87,18 @@ namespace Infinite_module_test{
             // we have to simulate a file structure with modules, so our hierarchy works
             public Dictionary<string, List<indexed_module_file>> file_groups = new();
             public struct indexed_module_file{
-                public indexed_module_file(string _name, string _alias, unpacked_module_file _file, int source_index, bool resource){
+                public indexed_module_file(string _name, string _alias, unpacked_module_file _file, /*int source_index,*/ bool resource){
                     name = _name;
                     alias = _alias;
                     file = _file;
-                    source_file_header_index = source_index;
+                    //source_file_header_index = source_index;
                     is_resource = resource;}
                 public string name;
                 public string alias;
                 public unpacked_module_file file;
-                public int source_file_header_index;
+                //public int source_file_header_index;
                 public bool is_resource; // i think we're supposed to use this to tell users whether they can open this or not?
             }
-
-            public module_header module_info;
-            public module_file[] files; // FileCount
-            public byte[] string_table; // current_offset + tag.NameOffset = string* // StringsSize
-            public int[] resource_table; // the function of this array is to index all of the tags that rely on resource things (not blocks), like models i think // ResourceCount
-            public block_header[] blocks; // BlockCount
 
             public string module_file_path; // idk why we'd need to store this
 
@@ -116,26 +110,26 @@ namespace Infinite_module_test{
                 if (!File.Exists(module_file_path)) throw new Exception("failed to find specified module file"); // probably redundant
 
                 module_reader = new FileStream(module_file_path, FileMode.Open, FileAccess.Read);
-               
+
                 // read module header
-                module_info = read_and_convert_to<module_header>(module_header_size);
+                module_header module_info = read_and_convert_to<module_header>(module_header_size);
 
                 // read module file headers
-                files = new module_file[module_info.FileCount];
+                module_file[] files = new module_file[module_info.FileCount];
                 for (int i = 0; i < files.Length; i++)
                     files[i] = read_and_convert_to<module_file>(module_file_size);
 
                 // read the string table
-                string_table = new byte[module_info.StringsSize];
+                byte[] string_table = new byte[module_info.StringsSize];
                 module_reader.Read(string_table, 0, module_info.StringsSize);
 
                 // read the resource indicies?
-                resource_table = new int[module_info.ResourceCount];
+                int[] resource_table = new int[module_info.ResourceCount];
                 for (int i = 0; i < resource_table.Length; i++)
                     resource_table[i] = read_and_convert_to<int>(4); // we should also fix this one too
 
                 // read the data blocks
-                blocks = new block_header[module_info.BlockCount];
+                block_header[] blocks = new block_header[module_info.BlockCount];
                 for (int i = 0; i < blocks.Length; i++)
                     blocks[i] = read_and_convert_to<block_header>(block_header_size);
 
@@ -148,133 +142,106 @@ namespace Infinite_module_test{
                 // then we need to map out our directory, so the tools 
                 for (int i = 0; i < files.Length; i++){
                     module_file tag = files[i];
-                    //Console.WriteLine("parent_index: " + tag.ParentIndex + " block_index: " + tag.BlockIndex + " block_count: " + tag.BlockCount + " data_offset: " + tag.get_dataoffset());
+                    // we now need to convert this an upacked module file
+                    // first get blocks
+                    // then get resources
+                    // also dont forget to paste out header in
 
-                    if (tag.ParentIndex != -1){ // resource file
-                        // get parent tag so we can reference that for names
-                        module_file par_tag = files[tag.ParentIndex];
+                    if (tag.ParentIndex != -1) continue; // skip resource files as we process them while getting tag resources
 
-                        // init group if it hasn't been already
-                        string group = groupID_str(par_tag.ClassId);
-                        if (!file_groups.ContainsKey(group))
-                            file_groups.Add(group, new List<indexed_module_file>());
+                    // init group if it hasn't been already
+                    string group = groupID_str(tag.ClassId);
+                    if (!file_groups.ContainsKey(group))
+                        file_groups.Add(group, new List<indexed_module_file>());
+                    // get tagname and add to directory
+                    string idname = tag.GlobalTagId.ToString("X8");
+                    string tagname = get_shorttagname(tag.GlobalTagId);
 
-                        // get tag name
-                        string idname = par_tag.GlobalTagId.ToString("X8");
-                        string tagname = get_shorttagname(par_tag.GlobalTagId);
-                        // figure out what index this resource is
-                        int resource_index = -1;
-                        for (int r = 0; r < par_tag.ResourceCount; r++){
-                            if (resource_table[par_tag.ResourceIndex + r] == i){
-                                resource_index = r;
-                                break;
-                        }}
+                    // we actually want to go through and get all the resources here, instead of loading them as separate files
+                    unpacked_module_file tag_unpacked = unpack_module_file(tag, blocks);
+
+                    for (int resource_index = 0; resource_index < tag.ResourceCount; resource_index++){
+                        module_file resource_tag = files[resource_table[tag.ResourceIndex + resource_index]];
+                        unpacked_module_file resource_unpacked = unpack_module_file(tag, blocks);
+                        tag_unpacked.resources.Add(resource_unpacked);
+
                         tagname += "_res_" + resource_index;
                         idname += "_res_" + resource_index;
-                        file_groups[group].Add(new(idname, tagname, i, true));
+                        file_groups[group].Add(new(idname, tagname, resource_unpacked, true));
+                    }
 
-                    }else{ // a rewgular tag file
-                        // init group if it hasn't been already
-                        string group = groupID_str(tag.ClassId);
-                        if (!file_groups.ContainsKey(group))
-                            file_groups.Add(group, new List<indexed_module_file>());
-                        // get tagname and add to directory
-                        string idname = tag.GlobalTagId.ToString("X8");
-                        string tagname = get_shorttagname(tag.GlobalTagId);
-                        file_groups[group].Add(new(idname, tagname, i, false));
-                }}
+
+                    file_groups[group].Add(new(idname, tagname, tag_unpacked, false));
+                    
+                }
                 // ok thats all, the tags have been read
-
-                //// debug this 
-                //// load & process the tag
-                //List<KeyValuePair<byte[], bool>> resource_list = new();
-                //string plugins_path = "C:\\Users\\Joe bingle\\Downloads\\plugins";
-
-                //tag test = new tag(plugins_path, resource_list);
-                //try{byte[] tagbytes = get_tag_bytes(582);
-                //    if (!test.Load_tag_file(tagbytes)){
-                //        throw new Exception("20DFA4DA" + " was not able to be loaded as a tag");
-                //}} catch (Exception ex){ 
-                //    throw new Exception("20DFA4DA" + " returned an error: " + ex.Message);
-                //}
             }
-            // unpack files?
-            public struct unpacked_module_file{
-                module_file header;
-                List<packed_block> blocks;
-                List<unpacked_module_file> resources; // we shouldn't have a recursive structure, but it should work fine
-            }
-            public struct packed_block{
-                //block_header header;
-                int uncompressed_size; // we dont want to have to de/recompress every tag every time we pack a single tag, so store it as already compressed
-                int uncompressed_offset; // while we dont necessarily need this, its probably important to have
-                byte[] bytes;
-            }
-
-            public byte[] get_module_file_bytes(module_file tag)
-            {
-                
-
-
-
-                // read the flags to determine how to process this file
+            private unpacked_module_file unpack_module_file(module_file tag, block_header[] blocks){
+                unpacked_module_file unpacked = new();
+                unpacked.header = tag;
+                unpacked.blocks = new();
+                // now we need to load all the blocks, easy enough
                 bool using_compression = (tag.Flags & flag_UseCompression) != 0; // pretty sure this is true if reading_seperate_blocks is also true, confirmation needed
                 bool reading_separate_blocks = (tag.Flags & flag_UseBlocks) != 0;
                 bool reading_raw_file = (tag.Flags & flag_UseRawfile) != 0;
-
-                byte[] decompressed_data = new byte[tag.TotalUncompressedSize];
                 long data_Address = tagdata_base + tag.get_dataoffset();
 
-                // test whether this tag is HD_1, and match it with our imaginary value
-                if ((tag.get_dataflags() & flag2_UseHd1) == 1){
-                    // then switch to hd1 mode // which for now just means do nothing
-                    return decompressed_data; // currently we cant fail this, and since we dont use this data, just fill blank
-                }
-
-                // also backup test to see if data address is greater than our address
-                if (data_Address >= module_reader.Length){
-                    // then switch to hd1 mode // which for now just means do nothing
-                    return decompressed_data; // currently we cant fail this, and since we dont use this data, just fill blank
-                }
+                // test whether this tag is HD_1 (through flags & backup address offset) and match it with our imaginary value
+                if ((tag.get_dataflags() & flag2_UseHd1) == 1 || data_Address >= module_reader.Length)
+                    return unpacked; // skip adding data blocks basically // this only happens for bitmaps i think, so we shouldn't have any issues with this??
 
                 if (reading_separate_blocks){
                     for (int b = 0; b < tag.BlockCount; b++){
                         var bloc = blocks[tag.BlockIndex + b];
                         byte[] block_bytes;
-
-                        // as it turns out, the 'compressedOffset' means the offset from the datablocks
                         module_reader.Seek(data_Address + bloc.CompressedOffset, SeekOrigin.Begin);
-                        if (bloc.Compressed == 1){
-
-                            byte[] bytes = new byte[bloc.CompressedSize];
-                            module_reader.Read(bytes, 0, bytes.Length);
-                            block_bytes = Oodle.Decompress(bytes, bytes.Length, bloc.UncompressedSize);
-                        }else{ // uncompressed
-
-                            block_bytes = new byte[bloc.UncompressedSize];
-                            module_reader.Read(block_bytes, 0, block_bytes.Length);
-                        }
-                        System.Buffer.BlockCopy(block_bytes, 0, decompressed_data, bloc.UncompressedOffset, block_bytes.Length);
-
+                        // determine read size from whether data is compressed or not
+                        if (bloc.Compressed == 1) block_bytes = new byte[bloc.CompressedSize];
+                        else block_bytes = new byte[bloc.UncompressedSize];
+                        // read data & push to tag data blocks
+                        module_reader.Read(block_bytes, 0, block_bytes.Length);
+                        unpacked.blocks.Add(new(((bloc.Compressed == 1) ? bloc.UncompressedSize : -1), 0, block_bytes));
                 }}else {  // is the manifest thingo, aka raw file, read data based off compressed and uncompressed length
+                    byte[] block_bytes;
                     module_reader.Seek(data_Address, SeekOrigin.Begin);
-                    if (using_compression){
-                        byte[] bytes = new byte[tag.TotalCompressedSize];
-                        module_reader.Read(bytes, 0, bytes.Length);
-                        decompressed_data = Oodle.Decompress(bytes, bytes.Length, tag.TotalUncompressedSize);
-                    } else module_reader.Read(decompressed_data, 0, tag.TotalUncompressedSize);
+                    // determine read size from whether data is compressed or not
+                    if (using_compression) block_bytes = new byte[tag.TotalCompressedSize];
+                    else block_bytes = new byte[tag.TotalUncompressedSize];
+                    // read data & push to tag data blocks
+                    module_reader.Read(block_bytes, 0, block_bytes.Length);
+                    unpacked.blocks.Add(new( ((using_compression)? tag.TotalUncompressedSize : -1), 0, block_bytes));
                 }
+                // resources will be handled outside of this, purely for less code
+                return unpacked;
+            }
+            // unpack files?
+            public struct unpacked_module_file{
+                public module_file header;
+                public List<packed_block> blocks;
+                public List<unpacked_module_file> resources; // we shouldn't have a recursive structure, but it should work fine
+            }
+            public struct packed_block{
+                public packed_block(int uncomp_size, int uncomp_offset, byte[] data){
+                    uncompressed_size = uncomp_size;
+                    uncompressed_offset = uncomp_offset;
+                    bytes = data;}
+                public int uncompressed_size; // we dont want to have to de/recompress every tag every time we pack a single tag, so store it as already compressed
+                public int uncompressed_offset; // while we dont necessarily need this, its probably important to have
+                public byte[] bytes;
+            }
 
+            public byte[] get_module_file_bytes(unpacked_module_file tag){
+                byte[] decompressed_data = new byte[tag.header.TotalUncompressedSize];
+                long data_Address = tagdata_base + tag.header.get_dataoffset();
 
-                //for (int i = 0; i < 10; i++)
-                //{
-                //    Console.WriteLine("0x" + decompressed_data[i].ToString("X2"));
-
-                //}
-                //Console.WriteLine("parent_index: " + tag.ParentIndex + " block_index: " + tag.BlockIndex + " block_count: " + tag.BlockCount + " data_offset: " + tag.get_dataoffset());
-                //Console.ReadLine();
-
-
+                foreach (var block in tag.blocks){
+                    // get byte array to copy from, decompress if needed
+                    byte[] block_bytes;
+                    if (block.uncompressed_size != -1) block_bytes = Oodle.Decompress(block.bytes, block.bytes.Length, block.uncompressed_size);
+                    else block_bytes = block.bytes;
+                    // paste into decompressed buffer
+                    System.Buffer.BlockCopy(block_bytes, 0, decompressed_data, block.uncompressed_offset, block_bytes.Length);
+                }
                 return decompressed_data;
             }
             public byte[] get_tag_bytes(int tag_index){ // kinda redundant
@@ -283,7 +250,7 @@ namespace Infinite_module_test{
                 //Console.ReadLine();
                 return get_module_file_bytes(tag);
             }
-            public List<byte[]> get_tag_resource_list(int tag_index){
+            public List<byte[]> get_tag_resource_list(unpacked_module_file parent_tag){
                 // get all resources & then read them into a list
                 List<byte[]> output = new();
                 module_file tag = files[tag_index];
