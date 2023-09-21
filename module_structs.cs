@@ -87,13 +87,15 @@ namespace Infinite_module_test{
             // we have to simulate a file structure with modules, so our hierarchy works
             public Dictionary<string, List<indexed_module_file>> file_groups = new();
             public struct indexed_module_file{
-                public indexed_module_file(string _name, string _alias, int source_index, bool resource){
+                public indexed_module_file(string _name, string _alias, unpacked_module_file _file, int source_index, bool resource){
                     name = _name;
                     alias = _alias;
+                    file = _file;
                     source_file_header_index = source_index;
                     is_resource = resource;}
                 public string name;
                 public string alias;
+                public unpacked_module_file file;
                 public int source_file_header_index;
                 public bool is_resource; // i think we're supposed to use this to tell users whether they can open this or not?
             }
@@ -196,6 +198,19 @@ namespace Infinite_module_test{
                 //    throw new Exception("20DFA4DA" + " returned an error: " + ex.Message);
                 //}
             }
+            // unpack files?
+            public struct unpacked_module_file{
+                module_file header;
+                List<packed_block> blocks;
+                List<unpacked_module_file> resources; // we shouldn't have a recursive structure, but it should work fine
+            }
+            public struct packed_block{
+                //block_header header;
+                int uncompressed_size; // we dont want to have to de/recompress every tag every time we pack a single tag, so store it as already compressed
+                int uncompressed_offset; // while we dont necessarily need this, its probably important to have
+                byte[] bytes;
+            }
+
             public byte[] get_module_file_bytes(module_file tag)
             {
                 
