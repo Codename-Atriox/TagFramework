@@ -307,7 +307,7 @@ namespace Infinite_module_test{
 
             [FieldOffset(0x14)] public int ManifestCount;       //  'FFFFFFFF' "Number of tags in the load manifest (0 if the module doesn't have one, see the "Load Manifest" section below)"
             [FieldOffset(0x18)] public int Manifest_Unk_0x18;   //  'FFFFFFFF' on blank modules, 0 on non blanks, assumedly this the index of the manifest file in the module files array
-            [FieldOffset(0x1C)] public int Manifest_Unk_0x1C;   //  'FFFFFFFF'
+            [FieldOffset(0x1C)] public int Manifest_Unk_0x1C;   //  'FFFFFFFF' this may be an index to that second blank file that shows up
 
             [FieldOffset(0x20)] public int ResourceIndex;   //  "Index of the first resource entry (numFiles - numResources)"
             [FieldOffset(0x24)] public int StringsSize;     //  total size (in bytes) of the strings table
@@ -319,7 +319,7 @@ namespace Infinite_module_test{
             // new with infinite
             [FieldOffset(0x40)] public int Unk_0x040;       //  0
             [FieldOffset(0x44)] public int Unk_0x044;       //  0
-            [FieldOffset(0x48)] public int Unk_0x048;       //  2
+            [FieldOffset(0x48)] public int Unk_0x048;       //  2 // i feel like this must be an alignment thing?
             [FieldOffset(0x4C)] public int Unk_0x04C;       //  0
         }
 
