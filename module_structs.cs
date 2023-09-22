@@ -20,6 +20,8 @@ using System.Text.Unicode;
 using System;
 using System.ComponentModel;
 using System.Xml.Linq;
+using System.Collections.Generic;
+using static System.Reflection.Metadata.BlobBuilder;
 
 // TODO:
 // 1. separate loading into its own class, so that all data used is easily disposable
@@ -104,6 +106,9 @@ namespace Infinite_module_test{
 
             FileStream module_reader; // so we can read from the module when calling tags
             long tagdata_base;
+
+            // just so we can recompile
+            module_header module_info;
             public module(string module_path){
                 module_file_path = module_path;
                 // and then he said "it's module'n time"
@@ -112,7 +117,7 @@ namespace Infinite_module_test{
                 module_reader = new FileStream(module_file_path, FileMode.Open, FileAccess.Read);
 
                 // read module header
-                module_header module_info = read_and_convert_to<module_header>(module_header_size);
+                module_info = read_and_convert_to<module_header>(module_header_size);
 
                 // read module file headers
                 module_file[] files = new module_file[module_info.FileCount];
@@ -158,11 +163,13 @@ namespace Infinite_module_test{
                     string tagname = get_shorttagname(tag.GlobalTagId);
 
                     // we actually want to go through and get all the resources here, instead of loading them as separate files
-                    unpacked_module_file tag_unpacked = unpack_module_file(tag, blocks);
+                    unpacked_module_file tag_unpacked = new(tag, blocks);
+                    //unpack_module_file(tag_unpacked);
 
                     for (int resource_index = 0; resource_index < tag.ResourceCount; resource_index++){
                         module_file resource_tag = files[resource_table[tag.ResourceIndex + resource_index]];
-                        unpacked_module_file resource_unpacked = unpack_module_file(tag, blocks);
+                        unpacked_module_file resource_unpacked = new(resource_tag, blocks);
+                        //unpack_module_file(resource_unpacked);
                         tag_unpacked.resources.Add(resource_unpacked);
 
                         tagname += "_res_" + resource_index;
@@ -176,23 +183,23 @@ namespace Infinite_module_test{
                 }
                 // ok thats all, the tags have been read
             }
-            private unpacked_module_file unpack_module_file(module_file tag, block_header[] blocks){
-                unpacked_module_file unpacked = new();
-                unpacked.header = tag;
+            private void unpack_module_file(unpacked_module_file unpacked){
+                if (unpacked.blocks != null) return; // already unpacked
                 unpacked.blocks = new();
+
                 // now we need to load all the blocks, easy enough
-                bool using_compression = (tag.Flags & flag_UseCompression) != 0; // pretty sure this is true if reading_seperate_blocks is also true, confirmation needed
-                bool reading_separate_blocks = (tag.Flags & flag_UseBlocks) != 0;
-                bool reading_raw_file = (tag.Flags & flag_UseRawfile) != 0;
-                long data_Address = tagdata_base + tag.get_dataoffset();
+                bool using_compression = (unpacked.header.Flags & flag_UseCompression) != 0; // pretty sure this is true if reading_seperate_blocks is also true, confirmation needed
+                bool reading_separate_blocks = (unpacked.header.Flags & flag_UseBlocks) != 0;
+                bool reading_raw_file = (unpacked.header.Flags & flag_UseRawfile) != 0;
+                long data_Address = tagdata_base + unpacked.header.get_dataoffset();
 
                 // test whether this tag is HD_1 (through flags & backup address offset) and match it with our imaginary value
-                if ((tag.get_dataflags() & flag2_UseHd1) == 1 || data_Address >= module_reader.Length)
-                    return unpacked; // skip adding data blocks basically // this only happens for bitmaps i think, so we shouldn't have any issues with this??
+                if ((unpacked.header.get_dataflags() & flag2_UseHd1) == 1 || data_Address >= module_reader.Length)
+                    return; // skip adding data blocks basically // this only happens for bitmaps i think, so we shouldn't have any issues with this??
 
                 if (reading_separate_blocks){
-                    for (int b = 0; b < tag.BlockCount; b++){
-                        var bloc = blocks[tag.BlockIndex + b];
+                    for (int b = 0; b < unpacked.module_blocks.Count; b++){
+                        var bloc = unpacked.module_blocks[b];
                         byte[] block_bytes;
                         module_reader.Seek(data_Address + bloc.CompressedOffset, SeekOrigin.Begin);
                         // determine read size from whether data is compressed or not
@@ -205,19 +212,35 @@ namespace Infinite_module_test{
                     byte[] block_bytes;
                     module_reader.Seek(data_Address, SeekOrigin.Begin);
                     // determine read size from whether data is compressed or not
-                    if (using_compression) block_bytes = new byte[tag.TotalCompressedSize];
-                    else block_bytes = new byte[tag.TotalUncompressedSize];
+                    if (using_compression) block_bytes = new byte[unpacked.header.TotalCompressedSize];
+                    else block_bytes = new byte[unpacked.header.TotalUncompressedSize];
                     // read data & push to tag data blocks
                     module_reader.Read(block_bytes, 0, block_bytes.Length);
-                    unpacked.blocks.Add(new( ((using_compression)? tag.TotalUncompressedSize : -1), 0, block_bytes));
+                    unpacked.blocks.Add(new( ((using_compression)? unpacked.header.TotalUncompressedSize : -1), 0, block_bytes));
                 }
                 // resources will be handled outside of this, purely for less code
-                return unpacked;
+                return;
             }
+            // this will not be called by any internal functions, but may be called by external functions if desired? to allow tools to keep mem usage low for big module files
+            public void flush_module_file(unpacked_module_file unpacked){
+                if (unpacked.blocks != null){
+                    unpacked.blocks.Clear();
+                    unpacked.blocks = null;
+            }}
             // unpack files?
             public struct unpacked_module_file{
+                public unpacked_module_file(module_file _header, block_header[] _blocks) {
+                    header = _header;
+                    module_blocks = new();
+                    blocks = null; // we use this to determine whether the tag is currently unpacked or not
+                    resources = new();
+                    // load block headers straight in, so we can unpack on demand
+                    for (int i = 0; i < header.BlockCount; i++)
+                        module_blocks.Add(_blocks[header.BlockIndex + header.BlockCount]);
+                }
                 public module_file header;
-                public List<packed_block> blocks;
+                public List<block_header> module_blocks; // this is used so we dont have to load every single block to memory to view tags
+                public List<packed_block>? blocks; // nullable so we can safely dispose & reload tags for memory purposes
                 public List<unpacked_module_file> resources; // we shouldn't have a recursive structure, but it should work fine
             }
             public struct packed_block{
@@ -232,8 +255,8 @@ namespace Infinite_module_test{
 
             public byte[] get_module_file_bytes(unpacked_module_file tag){
                 byte[] decompressed_data = new byte[tag.header.TotalUncompressedSize];
-                long data_Address = tagdata_base + tag.header.get_dataoffset();
-
+                unpack_module_file(tag); // this makes sure that we unpack before getting bytes
+                if (tag.blocks == null) throw new Exception("tag has no blocks, despite just unpacking");
                 foreach (var block in tag.blocks){
                     // get byte array to copy from, decompress if needed
                     byte[] block_bytes;
@@ -244,18 +267,11 @@ namespace Infinite_module_test{
                 }
                 return decompressed_data;
             }
-            public byte[] get_tag_bytes(int tag_index){ // kinda redundant
-                module_file tag = files[tag_index];
-                //Console.WriteLine("parent_index: " + tag.ParentIndex + " block_index: " + tag.BlockIndex + " block_count: " + tag.BlockCount + " data_offset: " + tag.get_dataoffset());
-                //Console.ReadLine();
-                return get_module_file_bytes(tag);
-            }
             public List<byte[]> get_tag_resource_list(unpacked_module_file parent_tag){
                 // get all resources & then read them into a list
                 List<byte[]> output = new();
-                module_file tag = files[tag_index];
-                for (int i = 0; i < tag.ResourceCount; i++)
-                    output.Add(get_module_file_bytes(files[resource_table[tag.ResourceIndex + i]]));
+                for (int i = 0; i < parent_tag.resources.Count; i++)
+                    output.Add(get_module_file_bytes(parent_tag.resources[i]));
                 
                 return output;
             }
@@ -273,6 +289,71 @@ namespace Infinite_module_test{
                 module_reader.Read(bytes, 0, read_length);
                 return KindaSafe_SuperCast<T>(bytes);
             }
+
+
+            public class module_compiler
+            {
+                module target_module;
+                public module_compiler(module active_module)
+                {
+                    target_module = active_module;
+
+
+                }
+                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes)
+                {
+                    // we simply process this tag & break it up into X compressed blocks & either add those blocks to the target tag
+                    // or add a brand new tag
+
+                    // we might have to research exactly how the blocks are determined though
+                    // min size for compression
+                    // min/max block size
+                    // how many blocks to make
+                    // etc
+                }
+                public void compile()
+                {
+                    // first step is to load all tags (this may be expensive on ram but should work i guess)
+                    foreach (var dir in target_module.file_groups)
+                        foreach (var file in dir.Value)
+                            target_module.unpack_module_file(file.file);
+
+                    // read module header
+                    module_header module_info = target_module.module_info;
+
+                    // we dont really have to do this, but we will do it anyway to better break down the process
+                    List<module_file> files = new();
+
+                    // we're not even going to bother putting stuff for writing the string table, screw compatibility
+
+                    // resource index table
+                    List<int> resource_table = new();
+
+                    // datablock table
+                    List<block_header> blocks = new();
+
+
+
+                    // generate blocks into those block headers
+                    // generate block indexes into the file headers
+
+                    // we need to update all the tag file headers?
+                    // we need to update resources? into their own list
+
+                    // then start writing stuff into the file
+                    // we should use a filestream because we are not going to use write all bytes for this one
+
+
+                    // make sure we close the read handle though, as the module is no longer readable and needs to be reloaded
+
+
+
+
+
+                }
+
+
+            }
         }
 
         // /////////////////// //
@@ -283,7 +364,7 @@ namespace Infinite_module_test{
         public struct module_header
         {
             [FieldOffset(0x00)] public int Head;           //  used to determine if this file is actually a module, should be "mohd"
-            [FieldOffset(0x04)] public int Version;        //  48 flight1, 51 flight2 & retail
+            [FieldOffset(0x04)] public int Version;        //  48 flight1, 51 flight2 & retail // idk what version we're up to now
             [FieldOffset(0x08)] public ulong ModuleId;       //  randomized between modules, algo unknown
             [FieldOffset(0x10)] public int FileCount;      //  the total number of tags contained by the module
 
@@ -1016,16 +1097,17 @@ namespace Infinite_module_test{
                     tag_size += tag_fixup_reference_size * output_tag_fixup_references.Count();
                     tag_size += stringtable.Count();
 
-                    tag_size += zoneset_header_size;
+                    int zoneset_size = zoneset_header_size;
                     // we have to go in and count the size of each & every silly zonset thing
                     foreach (zoneset_instance zoneset_inst in output_zonest_instances) {
-                        tag_size += zoneset_instance_header_size;
+                        zoneset_size += zoneset_instance_header_size;
                         // then process each item of the zoneset instance
-                        for (int i = 0; i < zoneset_inst.zonset_tags.Length; i++) tag_size += zoneset_tag_size;
-                        for (int i = 0; i < zoneset_inst.zonset_footer_tags.Length; i++) tag_size += zoneset_tag_size;
-                        for (int i = 0; i < zoneset_inst.zonset_parents.Length; i++) tag_size += 4;
+                        for (int i = 0; i < zoneset_inst.zonset_tags.Length; i++) zoneset_size += zoneset_tag_size;
+                        for (int i = 0; i < zoneset_inst.zonset_footer_tags.Length; i++) zoneset_size += zoneset_tag_size;
+                        for (int i = 0; i < zoneset_inst.zonset_parents.Length; i++) zoneset_size += 4;
                     }
-
+                    output_tag_header.ZoneSetDataSize = (uint)zoneset_size;
+                    tag_size += zoneset_size;
                     int total_header_size = tag_size;
 
                     tag_size += output_tagdata.Count();
