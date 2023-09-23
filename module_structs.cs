@@ -105,7 +105,7 @@ namespace Infinite_module_test{
                 public int manifest_index; // used so we can determine if this file is a manifest file, and if so which one (0, 1 or 2)
             }
 
-            public string module_file_path; // idk why we'd need to store this
+            public string module_file_path; // idk why we'd need to store this // ok i just found a use, we use this so we can reopen the module after recompiling
 
             FileStream module_reader; // so we can read from the module when calling tags
             long tagdata_base;
@@ -303,17 +303,14 @@ namespace Infinite_module_test{
             }
 
 
-            public class module_compiler
-            {
+            public class module_compiler{
                 module target_module;
-                public module_compiler(module active_module)
-                {
+                public module_compiler(module active_module){
                     target_module = active_module;
 
 
                 }
-                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes)
-                {
+                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes){
                     // we simply process this tag & break it up into X compressed blocks & either add those blocks to the target tag
                     // or add a brand new tag
 
@@ -323,13 +320,8 @@ namespace Infinite_module_test{
                     // how many blocks to make
                     // etc
                 }
-                public void compile()
-                {
-                    // first step is to load all tags (this may be expensive on ram but should work i guess)
-                    //foreach (var dir in target_module.file_groups)
-                    //    foreach (var file in dir.Value)
-
-                    target_module.module_reader.Close(); // close read handle as we are about to modify the file
+                public void compile(){
+                    target_module.module_reader.Dispose(); // close read handle as we are about to modify the file
 
                     // read module header
                     module_header module_info = target_module.module_info;
@@ -470,7 +462,8 @@ namespace Infinite_module_test{
                     }
                     // pass updated module info back to our module, so we can continue using it
                     target_module.module_info = module_info;
-
+                    // reopen module now that we've finished editing it
+                    target_module.module_reader = new FileStream(target_module.module_file_path, FileMode.Open, FileAccess.Read);
 
 
 
