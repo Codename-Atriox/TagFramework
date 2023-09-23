@@ -22,6 +22,7 @@ using System.ComponentModel;
 using System.Xml.Linq;
 using System.Collections.Generic;
 using static System.Reflection.Metadata.BlobBuilder;
+using System.Diagnostics.SymbolStore;
 
 // TODO:
 // 1. separate loading into its own class, so that all data used is easily disposable
@@ -89,17 +90,19 @@ namespace Infinite_module_test{
             // we have to simulate a file structure with modules, so our hierarchy works
             public Dictionary<string, List<indexed_module_file>> file_groups = new();
             public struct indexed_module_file{
-                public indexed_module_file(string _name, string _alias, unpacked_module_file _file, /*int source_index,*/ bool resource){
+                public indexed_module_file(string _name, string _alias, unpacked_module_file _file, /*int source_index,*/ bool resource, int _man_index){
                     name = _name;
                     alias = _alias;
                     file = _file;
                     //source_file_header_index = source_index;
-                    is_resource = resource;}
+                    is_resource = resource;
+                    manifest_index = _man_index;}
                 public string name;
                 public string alias;
                 public unpacked_module_file file;
                 //public int source_file_header_index;
                 public bool is_resource; // i think we're supposed to use this to tell users whether they can open this or not?
+                public int manifest_index; // used so we can determine if this file is a manifest file, and if so which one (0, 1 or 2)
             }
 
             public string module_file_path; // idk why we'd need to store this
@@ -174,11 +177,20 @@ namespace Infinite_module_test{
 
                         tagname += "_res_" + resource_index;
                         idname += "_res_" + resource_index;
-                        file_groups[group].Add(new(idname, tagname, resource_unpacked, true));
+                        file_groups[group].Add(new(idname, tagname, resource_unpacked, true, -1));
                     }
 
-
-                    file_groups[group].Add(new(idname, tagname, tag_unpacked, false));
+                    // manifest index 0
+                    if (i == module_info.Manifest00_index)
+                        file_groups[group].Add(new(idname, tagname, tag_unpacked, false, 0));
+                    // manifest index 1
+                    else if (i == module_info.Manifest01_index)
+                        file_groups[group].Add(new(idname, tagname, tag_unpacked, false, 1));
+                    // manifest index 2
+                    else if (i == module_info.Manifest02_index)
+                        file_groups[group].Add(new(idname, tagname, tag_unpacked, false, 2));
+                    // else regular file
+                    else file_groups[group].Add(new(idname, tagname, tag_unpacked, false, -1));
                     
                 }
                 // ok thats all, the tags have been read
@@ -322,17 +334,74 @@ namespace Infinite_module_test{
                     module_header module_info = target_module.module_info;
 
                     // we dont really have to do this, but we will do it anyway to better break down the process
-                    List<module_file> files = new();
+                    //unpacked_module_file unk_manifest_file_0; // present in some modules
+                    //unpacked_module_file manifest_file_1;     // present in all modules
+                    //unpacked_module_file unk_manifest_file_2; // not yet found
+                    List<unpacked_module_file> files = new();
+                    List<unpacked_module_file> resources = new();
 
-                    // we're not even going to bother putting stuff for writing the string table, screw compatibility
+                    // first we want to sort our tags into manageable groups (manifest, tags, resources)
+                    // we'll process resources into our list here
+                    foreach (var dir in target_module.file_groups){
+                        for (int i = 0; i < dir.Value.Count; i++){
+                            indexed_module_file file = dir.Value[i];
 
-                    // resource index table
+                            if (file.is_resource) continue; // we are not processing resources as files, we'll process them directly from tag's resource blocks
+
+                            // process resource table data
+                            file.file.header.ResourceCount = (uint)file.file.resources.Count;
+                            file.file.header.ResourceIndex = (uint)resources.Count;
+                            for (int r = 0; r < file.file.resources.Count; r++){
+                                unpacked_module_file resource = file.file.resources[r];
+                                // update parent index
+                                resource.header.ParentIndex = files.Count;
+                                resources.Add(resource);
+                                if (resource.resources.Count > 0)
+                                    throw new Exception("resource files are currently not allowed to own sub resources!!");
+                            }
+                            // write index to header if this is a manifest file
+                            if (file.manifest_index == 0)      module_info.Manifest00_index = files.Count;
+                            else if (file.manifest_index == 1) module_info.Manifest01_index = files.Count;
+                            else if (file.manifest_index == 2) module_info.Manifest02_index = files.Count;
+                            // manifest files also go into the file queue // 343 typically puts manifest files at the beginning, but it shouldn't matter where they go
+                            files.Add(file.file);
+                        }
+                    }
+                    // now that we know how many regular files there are, we can build resource tables by just adding regular file count to each resource file index
                     List<int> resource_table = new();
+                    // assume resource files DO NOT have resources
+                    foreach (var file in files)
+                        for (int r = 0; r < file.resources.Count; r++)
+                            resource_table.Add((int)file.header.ResourceIndex + r + files.Count);
 
-                    // datablock table
-                    List<block_header> blocks = new();
 
+                    files.AddRange(resources); // dump resources into files list so we dont have to repeat any steps invdividually for resources
 
+                    ulong file_bytes = 0;
+
+                    // we're not even going to bother putting code for writing the string table, screw compatibility
+
+                    List<packed_block> blocks = new();
+
+                    // now fill out the details for the blocks
+                    for(int i = 0; i < files.Count; i++) {
+                        unpacked_module_file file = files[i];
+                        if (file.blocks == null) throw new Exception("failed to generate/load unpacked tag blocks");
+
+                        file.header.BlockCount = (ushort)file.blocks.Count;
+                        file.header.BlockIndex = (uint)blocks.Count;
+                        bool ishd1 = ((file.header.get_dataflags() & flag2_UseHd1) == 1);
+
+                        // check to see if this is a hd1 resource, if so then set the addres to -1 basically & do not allocate any room
+                        if (ishd1) file.header.DataOffset_and_flags = (file.header.DataOffset_and_flags & 0x00ff000000000000) | 0x0000FFFFFFFFFFFF;
+                        // otherwise just read our regular offset
+                        else file.header.DataOffset_and_flags = (file.header.DataOffset_and_flags & 0x00ff000000000000) | file_bytes;
+                        for (int b = 0; b < file.blocks.Count; b++){
+                            packed_block data_block = file.blocks[b];
+                            if (!ishd1) file_bytes += (ulong)data_block.bytes.Length; // do not allocate bytes for hd1 tagdata, as we're just pretending it doesn't exist
+                            blocks.Add(data_block);
+                        }
+                    }
 
                     // generate blocks into those block headers
                     // generate block indexes into the file headers
@@ -368,9 +437,9 @@ namespace Infinite_module_test{
             [FieldOffset(0x08)] public ulong ModuleId;       //  randomized between modules, algo unknown
             [FieldOffset(0x10)] public int FileCount;      //  the total number of tags contained by the module
 
-            [FieldOffset(0x14)] public int ManifestCount;       //  'FFFFFFFF' "Number of tags in the load manifest (0 if the module doesn't have one, see the "Load Manifest" section below)"
-            [FieldOffset(0x18)] public int Manifest_Unk_0x18;   //  'FFFFFFFF' on blank modules, 0 on non blanks, assumedly this the index of the manifest file in the module files array
-            [FieldOffset(0x1C)] public int Manifest_Unk_0x1C;   //  'FFFFFFFF' this may be an index to that second blank file that shows up
+            [FieldOffset(0x14)] public int Manifest00_index;   //  not in most modules
+            [FieldOffset(0x18)] public int Manifest01_index;   //  present in most modules 
+            [FieldOffset(0x1C)] public int Manifest02_index;   //  so not not noticed to be present in any modules
 
             [FieldOffset(0x20)] public int ResourceIndex;   //  "Index of the first resource entry (numFiles - numResources)"
             [FieldOffset(0x24)] public int StringsSize;     //  total size (in bytes) of the strings table
@@ -394,7 +463,7 @@ namespace Infinite_module_test{
                 return (long)(DataOffset_and_flags & 0x0000FFFFFFFFFFFF);}
             public ushort get_dataflags(){ // NOTE: only the last 8 bits are actually flags, the other (first) 8 bits are some kind of counter
                 return (ushort)(DataOffset_and_flags >> 48);}
-            [FieldOffset(0x00)] public byte ClassGroup;     //  
+            [FieldOffset(0x00)] public byte Unk_0x00;     //  
             [FieldOffset(0x01)] public byte Flags;          // refer to flag bits below this struct
             [FieldOffset(0x02)] public ushort BlockCount;     // "The number of blocks that make up the file. Only valid if the HasBlocks flag is set"
             [FieldOffset(0x04)] public uint BlockIndex;     // "The index of the first block in the file. Only valid if the HasBlocks flag is set"
@@ -426,7 +495,7 @@ namespace Infinite_module_test{
             [FieldOffset(0x48)] public ulong AssetId;          // "The asset ID (-1 if not a tag)." maybe other files reference this through its id?
 
             [FieldOffset(0x50)] public uint ResourceCount;  // "Number of resources this file owns"
-            [FieldOffset(0x54)] public int Unk_0x54;       // so far has just been 0, may relate to hd files?
+            [FieldOffset(0x54)] public int Unk_0x54;       // 
         }
         // 'Flags' // 
         const byte flag_UseCompression = 0b00000001; // Uses Compression
@@ -758,11 +827,6 @@ namespace Infinite_module_test{
                 public List<thing> blocks = new();
             }
             // do we even need this, or do we just want to read the data straight from the tagreference structure inlined into the tagdata???
-            public class tagref{
-                public uint GlobalID;
-                public ulong AssetID;
-                public uint GroupTag;
-            }
             public struct thing
             {
                 // array of the struct bytes
@@ -1441,7 +1505,7 @@ namespace Infinite_module_test{
         {
             [FieldOffset(0x00)] public int     Magic; 
             [FieldOffset(0x04)] public uint    Version; 
-            [FieldOffset(0x08)] public ulong   Unk_0x08; 
+            [FieldOffset(0x08)] public ulong   Unk_0x08; // some hash thing aswell, could be combined with the next value?
             [FieldOffset(0x10)] public ulong   AssetChecksum;  
             // these cant be uints because of how the code is setup, should probably assert if -1
             [FieldOffset(0x18)] public int     DependencyCount;
@@ -1450,12 +1514,12 @@ namespace Infinite_module_test{
             [FieldOffset(0x24)] public int     DataReferenceCount; 
             [FieldOffset(0x28)] public int     TagReferenceCount; 
                                 
-            [FieldOffset(0x2C)] public uint    StringTableSize; // NOT CORRECT (doesnt need to be)
+            [FieldOffset(0x2C)] public uint    StringTableSize;
                                 
             [FieldOffset(0x30)] public uint    ZoneSetDataSize;    // this is the literal size in bytes
-            [FieldOffset(0x34)] public uint    Unk_0x34; // new with infinite, cold be an enum of how to read the alignment bytes // seems to be chunked resource file count
+            [FieldOffset(0x34)] public uint    Unk_0x34; // could be the block count that this file is broken up into?
                                 
-            [FieldOffset(0x38)] public uint    HeaderSize; // NOT CORRECT? because we're excluding that random data?
+            [FieldOffset(0x38)] public uint    HeaderSize; 
             [FieldOffset(0x3C)] public uint    DataSize; 
             [FieldOffset(0x40)] public uint    ResourceDataSize; 
             [FieldOffset(0x44)] public uint    ActualResoureDataSize;  // also new with infinite
@@ -1465,7 +1529,7 @@ namespace Infinite_module_test{
             [FieldOffset(0x4A)] public byte    ResourceDataAligment; 
             [FieldOffset(0x4B)] public byte    ActualResourceDataAligment; 
 
-            [FieldOffset(0x4C)] public int     Unk_0x4C; 
+            [FieldOffset(0x4C)] public int     Unk_0x4C; // padding?
         }
 
 
