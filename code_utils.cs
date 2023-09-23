@@ -66,5 +66,17 @@ namespace Infinite_module_test
             return sizeof(T);
         }
 
+        public static unsafe byte[] StructToBytes<T>(T _struct){
+            byte[] buffer = new byte[sizeof(T)];
+            CopyStructTo(_struct, buffer, 0);
+            return buffer; 
+        }
+        public static unsafe byte[] ListStructToBytes<T>(List<T> _structs){
+            byte[] buffer = new byte[sizeof(T) * _structs.Count];
+            for (int i = 0; i < _structs.Count; i++)
+                CopyStructTo(_structs[i], buffer, (sizeof(T) * i));
+            return buffer; 
+        }
+
     }
 }

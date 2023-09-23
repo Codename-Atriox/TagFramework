@@ -240,7 +240,7 @@ namespace Infinite_module_test{
                     unpacked.blocks = null;
             }}
             // unpack files?
-            public struct unpacked_module_file{
+            public class unpacked_module_file{ // class so when editing properties for compiling, they'll stick back to the main module
                 public unpacked_module_file(module_file _header, block_header[] _blocks) {
                     header = _header;
                     module_blocks = new();
@@ -326,9 +326,10 @@ namespace Infinite_module_test{
                 public void compile()
                 {
                     // first step is to load all tags (this may be expensive on ram but should work i guess)
-                    foreach (var dir in target_module.file_groups)
-                        foreach (var file in dir.Value)
-                            target_module.unpack_module_file(file.file);
+                    //foreach (var dir in target_module.file_groups)
+                    //    foreach (var file in dir.Value)
+
+                    target_module.module_reader.Close(); // close read handle as we are about to modify the file
 
                     // read module header
                     module_header module_info = target_module.module_info;
@@ -374,7 +375,7 @@ namespace Infinite_module_test{
                         for (int r = 0; r < file.resources.Count; r++)
                             resource_table.Add((int)file.header.ResourceIndex + r + files.Count);
 
-
+                    module_info.ResourceIndex = files.Count; // this gets the index of the first resource?
                     files.AddRange(resources); // dump resources into files list so we dont have to repeat any steps invdividually for resources
 
                     ulong file_bytes = 0;
@@ -382,9 +383,10 @@ namespace Infinite_module_test{
                     // we're not even going to bother putting code for writing the string table, screw compatibility
 
                     List<packed_block> blocks = new();
+                    List<block_header> header_blocks = new();
 
                     // now fill out the details for the blocks
-                    for(int i = 0; i < files.Count; i++) {
+                    for (int i = 0; i < files.Count; i++) {
                         unpacked_module_file file = files[i];
                         if (file.blocks == null) throw new Exception("failed to generate/load unpacked tag blocks");
 
@@ -396,24 +398,79 @@ namespace Infinite_module_test{
                         if (ishd1) file.header.DataOffset_and_flags = (file.header.DataOffset_and_flags & 0x00ff000000000000) | 0x0000FFFFFFFFFFFF;
                         // otherwise just read our regular offset
                         else file.header.DataOffset_and_flags = (file.header.DataOffset_and_flags & 0x00ff000000000000) | file_bytes;
+
+                        int compressed_offset = 0;
+                        int uncompressed_offset = 0;
                         for (int b = 0; b < file.blocks.Count; b++){
                             packed_block data_block = file.blocks[b];
-                            if (!ishd1) file_bytes += (ulong)data_block.bytes.Length; // do not allocate bytes for hd1 tagdata, as we're just pretending it doesn't exist
+                            // yeah just create the block header as well, while we're at it
+                            block_header current_header = new();
+                            current_header.Compressed = (data_block.uncompressed_size == -1)? 1 : 0; // why cant we cast bool to int??????
+                            if (current_header.Compressed == 1)
+                                current_header.UncompressedSize = data_block.uncompressed_size;
+                            else current_header.UncompressedSize = data_block.bytes.Length;
+                            current_header.CompressedSize = data_block.bytes.Length;
+                            current_header.CompressedOffset = compressed_offset;
+                            current_header.UncompressedOffset = compressed_offset;
+                            // then increment offset
+                            compressed_offset += current_header.CompressedSize;
+                            uncompressed_offset += current_header.UncompressedSize;
+                            // add to lists
+                            header_blocks.Add(current_header);
                             blocks.Add(data_block);
                         }
+                        if (!ishd1) file_bytes += (ulong)compressed_offset; // do not allocate bytes for hd1 tagdata, as we're just pretending it doesn't exist
                     }
 
-                    // generate blocks into those block headers
-                    // generate block indexes into the file headers
-
-                    // we need to update all the tag file headers?
-                    // we need to update resources? into their own list
+                    // lastly we need to update the module header to match the new information
+                    module_info.BlockCount = blocks.Count;
+                    module_info.FileCount = files.Count;
+                    module_info.ResourceCount = resource_table.Count;
+                    module_info.StringsSize = 0;
+                    module_info.Checksum = 0; // just because
 
                     // then start writing stuff into the file
                     // we should use a filestream because we are not going to use write all bytes for this one
+                    using (FileStream fsStream = new FileStream("C:\\Users\\Joe bingle\\Downloads\\module structs test\\compiled.module", FileMode.Create))
+                    using (BinaryWriter writer = new BinaryWriter(fsStream, Encoding.UTF8)){
+                        // write header
+                        writer.Write(StructToBytes(module_info));
+
+                        // write file headers
+                        foreach (unpacked_module_file file in files)
+                            writer.Write(StructToBytes(file.header));
+                        // write resource table
+                        foreach (int resource_index in resource_table)
+                            writer.Write(resource_index);
+                        // write data blocks
+                        foreach (block_header block in header_blocks)
+                            writer.Write(StructToBytes(block));
+
+                        // update current module tagdata address (so it wont break if we continue using this module without reopening the tool)
+                        target_module.tagdata_base = (writer.BaseStream.Position / 0x1000 + 1) * 0x1000;
+                        // we then have to calculate the padding (to get to the next 0x?????000 address?)
+                        long padding_required = 0x1000 - (writer.BaseStream.Position % 0x1000);
+                        writer.Write(new byte[padding_required]);
+
+                        // now write all the tagdata
+                        // as long as we use the same algorithm we should not have any issues with aligning the data
+                        for (int i = 0; i < files.Count; i++){
+                            unpacked_module_file file = files[i];
+                            target_module.unpack_module_file(file);
+                            if (file.blocks == null) throw new Exception("failed to unpack tag's blocks!");
+                            for (int b = 0; b < file.blocks.Count; b++){
+                                packed_block data_block = file.blocks[b];
+                                writer.Write(data_block.bytes);
+                            }
+                            target_module.flush_module_file(file); // cleanup resources so we dont buildup a huge amount of RAM
+                        }
 
 
-                    // make sure we close the read handle though, as the module is no longer readable and needs to be reloaded
+
+                    }
+                    // pass updated module info back to our module, so we can continue using it
+                    target_module.module_info = module_info;
+
 
 
 
