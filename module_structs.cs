@@ -242,14 +242,15 @@ namespace Infinite_module_test{
             }}
             // unpack files?
             public class unpacked_module_file{ // class so when editing properties for compiling, they'll stick back to the main module
-                public unpacked_module_file(module_file _header, block_header[] _blocks) {
+                public unpacked_module_file(module_file _header, block_header[]? _blocks = null) {
                     header = _header;
                     module_blocks = new();
                     blocks = null; // we use this to determine whether the tag is currently unpacked or not
                     resources = new();
                     // load block headers straight in, so we can unpack on demand
-                    for (int i = 0; i < header.BlockCount; i++)
-                        module_blocks.Add(_blocks[header.BlockIndex + i]);
+                    if (_blocks != null)
+                        for (int i = 0; i < header.BlockCount; i++)
+                            module_blocks.Add(_blocks[header.BlockIndex + i]);
                 }
                 public module_file header;
                 public List<block_header> module_blocks; // this is used so we dont have to load every single block to memory to view tags
@@ -311,7 +312,7 @@ namespace Infinite_module_test{
 
 
                 }
-                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes){
+                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes, uint tagID, ulong? assetID, uint? group){
                     // we simply process this tag & break it up into X compressed blocks & either add those blocks to the target tag
                     // or add a brand new tag
 
@@ -320,6 +321,89 @@ namespace Infinite_module_test{
                     // min/max block size
                     // how many blocks to make
                     // etc
+
+
+                    // new comments
+                    // first step if test whether this tag already exists in our list (via tagID)
+                    // second step is to fetch/create the tagheader
+                    // third is to pack file & update/create file reference thing
+                    // 4th is to clear resources from the file explorer?
+                }
+                private unpacked_module_file pack_file(byte[] file_bytes, module_file file_header){
+                    
+                    unpacked_module_file result = new(file_header);
+                    result.blocks = new();
+                    // set all the placeholder values 
+                    result.header.Unk_0x54 = -1;
+                    result.header.DataOffset_and_flags = 0x0000FFFFFFFFFFFF; // do not give the option to set the hd1 flag, theres no point
+                    // set all default/unknown values
+
+                    // determine if this is a tag file
+                    int offset = 0;
+                    int comp_offset = 0;
+                    bool is_using_compression = false;
+                    if (file_bytes[0..4].SequenceEqual(tag_magic)){
+                        // then we need to break this up into 4 categories of blocks
+                        tag_header header = KindaSafe_SuperCast<tag_header>(file_bytes, 0ul);
+                        is_using_compression |= pack_chunks(file_bytes, result.blocks, (int)header.HeaderSize, ref offset, ref comp_offset);
+                        is_using_compression |= pack_chunks(file_bytes, result.blocks, (int)header.DataSize, ref offset, ref comp_offset);
+                        is_using_compression |= pack_chunks(file_bytes, result.blocks, (int)header.ResourceDataSize, ref offset, ref comp_offset);
+                        is_using_compression |= pack_chunks(file_bytes, result.blocks, (int)header.ActualResoureDataSize, ref offset, ref comp_offset);
+                        // setup header data accordingly
+                        result.header.DataOffset_and_flags |= flag_UseBlocks << 48;
+                        // partition sizes
+                        result.header.UncompressedHeaderSize = (int)header.HeaderSize;
+                        result.header.UncompressedTagDataSize = (int)header.DataSize;
+                        result.header.UncompressedResourceDataSize = (int)header.ResourceDataSize;
+                        result.header.UncompressedActualResourceDataSize = (int)header.ActualResoureDataSize;
+                        // partition alignments
+                        result.header.HeaderAlignment = header.HeaderAlignment;
+                        result.header.TagDataAlightment = header.TagDataAlightment;
+                        result.header.ResourceDataAligment = header.ResourceDataAligment;
+                        result.header.ActualResourceDataAligment = header.ActualResourceDataAligment;
+                    // otherwise the file is a single chunk (or a few if large)
+                    }else{
+                        is_using_compression |= pack_chunks(file_bytes, result.blocks, file_bytes.Length, ref offset, ref comp_offset);
+                        // set raw file flag
+                        result.header.DataOffset_and_flags |= flag_UseRawfile << 48;
+                        // non-tag files dont need any data header blocks if they only have 1
+                        // NOTE: this doesn't matter as the code in the packer will just tell it to use blocks anyway
+                        if (result.blocks.Count > 1)
+                            result.header.DataOffset_and_flags |= flag_UseBlocks << 48;
+                    }
+                    // update file sizes
+                    result.header.TotalUncompressedSize = offset;
+                    result.header.TotalCompressedSize = comp_offset;
+                    // check compression flag if the data was compressed
+                    if (is_using_compression) result.header.DataOffset_and_flags |= flag_UseCompression << 48;
+                    return result;
+                }
+                // returns whether the chunks were compressed
+                private bool pack_chunks(byte[] source, List<packed_block> blocks, int remaining_length, ref int offset, ref int compressed_offset){
+                    bool is_compressed = false;
+                    // loop to process block into chunks with a max size of 0x100000
+                    while (remaining_length > 0){
+                        int chunk_length = remaining_length;
+                        if (chunk_length > 0x100000)
+                            chunk_length = 0x100000;
+                        remaining_length -= 0x100000; // detract size that we're processing
+                        // process & append current chunk
+                        byte[] current_chunk = source[offset..(offset+ chunk_length)];
+                        packed_block packed_chunk = new();
+                        packed_chunk.uncompressed_offset = offset;
+                        if (current_chunk.Length > 256){ // if chunk meets compression criteria
+                            packed_chunk.uncompressed_size = current_chunk.Length;
+                            packed_chunk.bytes = Oodle.Compress(current_chunk, OodleFormat.Kraken, OodleCompressionLevel.Normal);
+                            is_compressed = true;
+                        }else{ // do not compress
+                            packed_chunk.uncompressed_size = -1;
+                            packed_chunk.bytes = current_chunk;
+                        }
+                        blocks.Add(packed_chunk);
+                        offset += chunk_length;
+                        compressed_offset += packed_chunk.bytes.Length;
+                    }
+                    return is_compressed;
                 }
                 public void compile(){
                     //target_module.module_reader.Dispose(); // close read handle as we are about to modify the file
@@ -375,52 +459,56 @@ namespace Infinite_module_test{
 
                     // we're not even going to bother putting code for writing the string table, screw compatibility
 
-                    List<packed_block> blocks = new();
                     List<block_header> header_blocks = new();
-                    List<ulong> block_offsets = new();
 
                     // now fill out the details for the blocks
                     for (int i = 0; i < files.Count; i++) {
                         unpacked_module_file file = files[i];
-                        // dont unpack, but do check to see if the tag is already unpacked, meaning that we specifically unpacked it to compile a new version
-                        target_module.unpack_module_file(file);
-                        if (file.blocks == null) throw new Exception("failed to generate/load unpacked tag blocks");
 
-                        file.header.BlockCount = (ushort)file.blocks.Count;
-                        file.header.BlockIndex = (uint)blocks.Count;
+                        file.header.BlockIndex = (uint)header_blocks.Count;
                         bool ishd1 = ((file.header.get_dataflags() & flag2_UseHd1) == 1);
-
                         // check to see if this is a hd1 resource, if so then set the addres to -1 basically & do not allocate any room
                         if (ishd1) file.header.DataOffset_and_flags = (file.header.DataOffset_and_flags & 0x00ff000000000000) | 0x0000FFFFFFFFFFFF;
                         // otherwise just read our regular offset
                         else file.header.DataOffset_and_flags = (file.header.DataOffset_and_flags & 0x00ff000000000000) | file_bytes;
 
-                        int compressed_offset = 0;
-                        int uncompressed_offset = 0;
-                        for (int b = 0; b < file.blocks.Count; b++){
-                            packed_block data_block = file.blocks[b];
-                            // yeah just create the block header as well, while we're at it
-                            block_header current_header = new();
-                            current_header.Compressed = (data_block.uncompressed_size == -1)? 0 : 1; // why cant we cast bool to int??????
-                            if (current_header.Compressed == 1)
-                                current_header.UncompressedSize = data_block.uncompressed_size;
-                            else current_header.UncompressedSize = data_block.bytes.Length;
-                            current_header.CompressedSize = data_block.bytes.Length;
-                            current_header.CompressedOffset = compressed_offset;
-                            current_header.UncompressedOffset = uncompressed_offset;
-                            // then increment offset
-                            compressed_offset += current_header.CompressedSize;
-                            uncompressed_offset += current_header.UncompressedSize;
-                            // add to lists
-                            header_blocks.Add(current_header);
-                            blocks.Add(data_block);
-                            block_offsets.Add(file_bytes);
-                        }
-                        if (!ishd1) file_bytes += (ulong)compressed_offset; // do not allocate bytes for hd1 tagdata, as we're just pretending it doesn't exist
-                    }
+                        if (file.blocks == null){ // block has no new data, just toss their original datablocks back in
+                            foreach(block_header block in file.module_blocks){
+                                header_blocks.Add(block);
+                                if (!ishd1) file_bytes += (ulong)block.CompressedSize; 
+                        }}else{ // otherwise we want to compile the updated data for this block
+                            file.header.BlockCount = (ushort)file.blocks.Count;
+                            // NOTE: this will overide resources who intentionally have no resources allocated
+                            // so to play it safe, we will set the using blocks flag just incase, this is not the proper solution however.
+                            file.header.DataOffset_and_flags |= flag_UseBlocks << 48; 
+
+                            int compressed_offset = 0;
+                            int uncompressed_offset = 0;
+                            // we also want to compile the new blocks for this guy, so we can then read this file from disk after
+                            file.module_blocks.Clear();
+                            for (int b = 0; b < file.blocks.Count; b++){
+                                packed_block data_block = file.blocks[b];
+                                // yeah just create the block header as well, while we're at it
+                                block_header current_header = new();
+                                current_header.Compressed = (data_block.uncompressed_size == -1)? 0 : 1; // why cant we cast bool to int??????
+                                if (current_header.Compressed == 1)
+                                    current_header.UncompressedSize = data_block.uncompressed_size;
+                                else current_header.UncompressedSize = data_block.bytes.Length;
+                                current_header.CompressedSize = data_block.bytes.Length;
+                                current_header.CompressedOffset = compressed_offset;
+                                current_header.UncompressedOffset = uncompressed_offset;
+                                // then increment offset
+                                compressed_offset += current_header.CompressedSize;
+                                uncompressed_offset += current_header.UncompressedSize;
+                                // add to lists
+                                header_blocks.Add(current_header);
+                                file.module_blocks.Add(current_header);
+                            }
+                            if (!ishd1) file_bytes += (ulong)compressed_offset; // do not allocate bytes for hd1 tagdata, as we're just pretending it doesn't exist
+                    }}
 
                     // lastly we need to update the module header to match the new information
-                    module_info.BlockCount = blocks.Count;
+                    module_info.BlockCount = header_blocks.Count;
                     module_info.FileCount = files.Count;
                     module_info.ResourceCount = resource_table.Count;
                     module_info.StringsSize = 0;
@@ -452,6 +540,7 @@ namespace Infinite_module_test{
                         // as long as we use the same algorithm we should not have any issues with aligning the data
                         for (int i = 0; i < files.Count; i++){
                             unpacked_module_file file = files[i];
+                            target_module.unpack_module_file(file);
                             if (file.blocks == null) throw new Exception("failed to unpack tag's blocks!");
                             // only write bytes if its not a hd1 file
                             if ((file.header.get_dataflags() & flag2_UseHd1) == 0)
@@ -462,11 +551,9 @@ namespace Infinite_module_test{
                                     if (file.blocks[b].bytes.Length != header_blocks[(int)file.header.BlockIndex + b].CompressedSize)
                                         throw new Exception("incorrect block size when writing tag data!");
 
-                                    // we need to put some logic in here to confirm whether we're in the correct spot to write this
                                     writer.Write(file.blocks[b].bytes);
                                 }
-                            
-                            //target_module.flush_module_file(file); // cleanup resources so we dont buildup a huge amount of RAM
+                            target_module.flush_module_file(file); // cleanup resources so we dont buildup a huge amount of RAM
                         }
 
 
