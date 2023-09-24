@@ -174,10 +174,7 @@ namespace Infinite_module_test{
                         unpacked_module_file resource_unpacked = new(resource_tag, blocks);
                         //unpack_module_file(resource_unpacked);
                         tag_unpacked.resources.Add(resource_unpacked);
-
-                        tagname += "_res_" + resource_index;
-                        idname += "_res_" + resource_index;
-                        file_groups[group].Add(new(idname, tagname, resource_unpacked, true, -1));
+                        file_groups[group].Add(new(idname + "_res_" + resource_index, tagname + "_res_" + resource_index, resource_unpacked, true, -1));
                     }
 
                     // manifest index 0
@@ -194,6 +191,10 @@ namespace Infinite_module_test{
                     
                 }
                 // ok thats all, the tags have been read
+
+                // debug testing compiling
+                //module_compiler mod_comper = new(this);
+                //mod_comper.compile();
             }
             private void unpack_module_file(unpacked_module_file unpacked){
                 if (unpacked.blocks != null) return; // already unpacked
@@ -219,7 +220,7 @@ namespace Infinite_module_test{
                         else block_bytes = new byte[bloc.UncompressedSize];
                         // read data & push to tag data blocks
                         module_reader.Read(block_bytes, 0, block_bytes.Length);
-                        unpacked.blocks.Add(new(((bloc.Compressed == 1) ? bloc.UncompressedSize : -1), 0, block_bytes));
+                        unpacked.blocks.Add(new(((bloc.Compressed == 1) ? bloc.UncompressedSize : -1), bloc.UncompressedOffset, block_bytes));
                 }}else {  // is the manifest thingo, aka raw file, read data based off compressed and uncompressed length
                     byte[] block_bytes;
                     module_reader.Seek(data_Address, SeekOrigin.Begin);
@@ -248,7 +249,7 @@ namespace Infinite_module_test{
                     resources = new();
                     // load block headers straight in, so we can unpack on demand
                     for (int i = 0; i < header.BlockCount; i++)
-                        module_blocks.Add(_blocks[header.BlockIndex + header.BlockCount]);
+                        module_blocks.Add(_blocks[header.BlockIndex + i]);
                 }
                 public module_file header;
                 public List<block_header> module_blocks; // this is used so we dont have to load every single block to memory to view tags
@@ -321,7 +322,7 @@ namespace Infinite_module_test{
                     // etc
                 }
                 public void compile(){
-                    target_module.module_reader.Dispose(); // close read handle as we are about to modify the file
+                    //target_module.module_reader.Dispose(); // close read handle as we are about to modify the file
 
                     // read module header
                     module_header module_info = target_module.module_info;
@@ -376,10 +377,13 @@ namespace Infinite_module_test{
 
                     List<packed_block> blocks = new();
                     List<block_header> header_blocks = new();
+                    List<ulong> block_offsets = new();
 
                     // now fill out the details for the blocks
                     for (int i = 0; i < files.Count; i++) {
                         unpacked_module_file file = files[i];
+                        // dont unpack, but do check to see if the tag is already unpacked, meaning that we specifically unpacked it to compile a new version
+                        target_module.unpack_module_file(file);
                         if (file.blocks == null) throw new Exception("failed to generate/load unpacked tag blocks");
 
                         file.header.BlockCount = (ushort)file.blocks.Count;
@@ -397,19 +401,20 @@ namespace Infinite_module_test{
                             packed_block data_block = file.blocks[b];
                             // yeah just create the block header as well, while we're at it
                             block_header current_header = new();
-                            current_header.Compressed = (data_block.uncompressed_size == -1)? 1 : 0; // why cant we cast bool to int??????
+                            current_header.Compressed = (data_block.uncompressed_size == -1)? 0 : 1; // why cant we cast bool to int??????
                             if (current_header.Compressed == 1)
                                 current_header.UncompressedSize = data_block.uncompressed_size;
                             else current_header.UncompressedSize = data_block.bytes.Length;
                             current_header.CompressedSize = data_block.bytes.Length;
                             current_header.CompressedOffset = compressed_offset;
-                            current_header.UncompressedOffset = compressed_offset;
+                            current_header.UncompressedOffset = uncompressed_offset;
                             // then increment offset
                             compressed_offset += current_header.CompressedSize;
                             uncompressed_offset += current_header.UncompressedSize;
                             // add to lists
                             header_blocks.Add(current_header);
                             blocks.Add(data_block);
+                            block_offsets.Add(file_bytes);
                         }
                         if (!ishd1) file_bytes += (ulong)compressed_offset; // do not allocate bytes for hd1 tagdata, as we're just pretending it doesn't exist
                     }
@@ -427,7 +432,6 @@ namespace Infinite_module_test{
                     using (BinaryWriter writer = new BinaryWriter(fsStream, Encoding.UTF8)){
                         // write header
                         writer.Write(StructToBytes(module_info));
-
                         // write file headers
                         foreach (unpacked_module_file file in files)
                             writer.Write(StructToBytes(file.header));
@@ -448,13 +452,21 @@ namespace Infinite_module_test{
                         // as long as we use the same algorithm we should not have any issues with aligning the data
                         for (int i = 0; i < files.Count; i++){
                             unpacked_module_file file = files[i];
-                            target_module.unpack_module_file(file);
                             if (file.blocks == null) throw new Exception("failed to unpack tag's blocks!");
-                            for (int b = 0; b < file.blocks.Count; b++){
-                                packed_block data_block = file.blocks[b];
-                                writer.Write(data_block.bytes);
-                            }
-                            target_module.flush_module_file(file); // cleanup resources so we dont buildup a huge amount of RAM
+                            // only write bytes if its not a hd1 file
+                            if ((file.header.get_dataflags() & flag2_UseHd1) == 0)
+                                for (int b = 0; b < file.blocks.Count; b++){
+                                    // do some error checking to make sure the code worked exactly how we thought it would
+                                    if ((writer.BaseStream.Position - target_module.tagdata_base) != file.header.get_dataoffset() + header_blocks[(int)file.header.BlockIndex + b].CompressedOffset)
+                                        throw new Exception("offset fail! bad offset when writing tag data!!!");
+                                    if (file.blocks[b].bytes.Length != header_blocks[(int)file.header.BlockIndex + b].CompressedSize)
+                                        throw new Exception("incorrect block size when writing tag data!");
+
+                                    // we need to put some logic in here to confirm whether we're in the correct spot to write this
+                                    writer.Write(file.blocks[b].bytes);
+                                }
+                            
+                            //target_module.flush_module_file(file); // cleanup resources so we dont buildup a huge amount of RAM
                         }
 
 
