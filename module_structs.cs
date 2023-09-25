@@ -111,7 +111,7 @@ namespace Infinite_module_test{
             long tagdata_base;
 
             // just so we can recompile
-            module_header module_info;
+            public module_header module_info;
             public module(string module_path){
                 module_file_path = module_path;
                 // and then he said "it's module'n time"
@@ -474,7 +474,7 @@ namespace Infinite_module_test{
                     }
                     return is_compressed;
                 }
-                public void compile(){
+                public int compile(){ // returns changed tags count?
                     //target_module.module_reader.Dispose(); // close read handle as we are about to modify the file
 
                     // read module header
@@ -529,7 +529,7 @@ namespace Infinite_module_test{
                     // we're not even going to bother putting code for writing the string table, screw compatibility
 
                     List<block_header> header_blocks = new();
-
+                    int changed_tags = 0;
                     // now fill out the details for the blocks
                     for (int i = 0; i < files.Count; i++) {
                         unpacked_module_file file = files[i];
@@ -549,7 +549,8 @@ namespace Infinite_module_test{
                             file.header.BlockCount = (ushort)file.blocks.Count;
                             // NOTE: this will overide resources who intentionally have no resources allocated
                             // so to play it safe, we will set the using blocks flag just incase, this is not the proper solution however.
-                            file.header.DataOffset_and_flags |= flag_UseBlocks << 48; 
+                            file.header.DataOffset_and_flags |= flag_UseBlocks << 48;
+                            changed_tags++;
 
                             int compressed_offset = 0;
                             int uncompressed_offset = 0;
@@ -633,10 +634,7 @@ namespace Infinite_module_test{
                     // reopen module now that we've finished editing it
                     target_module.module_reader = new FileStream(target_module.module_file_path, FileMode.Open, FileAccess.Read);
 
-
-
-
-
+                    return changed_tags;
                 }
 
 
