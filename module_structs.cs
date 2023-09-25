@@ -312,7 +312,7 @@ namespace Infinite_module_test{
 
 
                 }
-                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes, uint tagID, ulong? assetID, uint? group){
+                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes, uint tagID, ulong? assetID, int? group){
                     // we simply process this tag & break it up into X compressed blocks & either add those blocks to the target tag
                     // or add a brand new tag
 
@@ -324,10 +324,79 @@ namespace Infinite_module_test{
 
 
                     // new comments
-                    // first step if test whether this tag already exists in our list (via tagID)
-                    // second step is to fetch/create the tagheader
-                    // third is to pack file & update/create file reference thing
-                    // 4th is to clear resources from the file explorer?
+                    // first step is test whether this tag already exists in our list (via tagID)
+                    foreach(var v in target_module.file_groups){
+                        for (int i = 0; i < v.Value.Count; i++){
+                            indexed_module_file index_file = v.Value[i];
+                            if (index_file.file.header.GlobalTagId == tagID){
+                                // repack contents
+                                unpacked_module_file new_tag_content = pack_file(tag_bytes, index_file.file.header);
+
+                                // update resources?
+
+                                // plus create headers for any new ones?
+                                // remove old resources from the file heirarchy
+                                for (int file_index = 0; file_index < v.Value.Count; file_index++){
+                                    foreach(var resource in index_file.file.resources){
+                                        if (resource == v.Value[file_index].file){
+                                            // then this file
+                                            v.Value.RemoveAt(file_index);
+                                            file_index--; // so we dont skip anything
+                                            continue; // if this index was a match, then the last index will not be
+                                }}}
+
+                                // repack resources
+                                for (int resource_index = 0; resource_index < resource_bytes.Count; resource_index++) {
+                                    // dont even bother using the old file headers for the resources // just generate some new ones
+                                    module_file new_res_header = new();
+                                    new_res_header.GlobalTagId = 0xffffffffu;
+                                    new_res_header.ClassId = -1;
+                                    new_res_header.AssetId = 0xffffffffffffffffu;
+                                    unpacked_module_file new_resource_content = pack_file(resource_bytes[resource_index], new_res_header);
+
+                                    new_tag_content.resources.Add(new_resource_content);
+                                    v.Value.Add(new(index_file.name + "_res_" + resource_index, index_file.alias + "_res_" + resource_index, new_resource_content, true, -1));
+                                }
+
+                                index_file.file = new_tag_content;
+                                v.Value[i] = index_file;
+                                return;
+                            }
+                            // otherwise continue looking
+                        }
+                    }
+
+                    throw new Exception("importing new tags is currently unsupported!! (tags must be referenced in the runtime manifest or something, which requires further code stuff)");
+                    // if no matches found then we assume we're creating a new tag header
+                    // check to make sure we actually want to create a new one, else epic exception
+                    if (assetID == null || group == null)
+                        throw new Exception("couldn't find target id in module, and no extra details provided to generate new tag header!!");
+
+                    module_file new_file_header = new();
+                    new_file_header.GlobalTagId = tagID;
+                    new_file_header.AssetId = (ulong)assetID;
+                    new_file_header.ClassId = (int)group;
+                    unpacked_module_file packed_file = pack_file(tag_bytes, new_file_header);
+
+                    string target_folder = groupID_str((int)group);
+                    if (!target_module.file_groups.ContainsKey(target_folder))
+                        target_module.file_groups.Add(target_folder, new List<indexed_module_file>());
+                    // get tagname and add to directory
+                    string idname = tagID.ToString("X8");
+                    string tagname = get_shorttagname(tagID);
+
+                    // then append all resources
+                    for (int resource_index = 0; resource_index < resource_bytes.Count; resource_index++){
+                        module_file resource_tag = new();
+                        resource_tag.GlobalTagId = 0xffffffffu;
+                        resource_tag.ClassId = -1;
+                        resource_tag.AssetId = 0xffffffffffffffffu;
+                        unpacked_module_file packed_resource = pack_file(tag_bytes, new_file_header);
+
+                        packed_file.resources.Add(packed_resource);
+                        target_module.file_groups[target_folder].Add(new(idname + "_res_" + resource_index, tagname + "_res_" + resource_index, packed_resource, true, -1));
+                    }
+                    target_module.file_groups[target_folder].Add(new(idname, tagname, packed_file, false, -1));
                 }
                 private unpacked_module_file pack_file(byte[] file_bytes, module_file file_header){
                     
