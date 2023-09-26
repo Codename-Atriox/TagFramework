@@ -106,6 +106,7 @@ namespace Infinite_module_test{
             }
 
             public string module_file_path; // idk why we'd need to store this // ok i just found a use, we use this so we can reopen the module after recompiling
+            public string module_name;
 
             FileStream module_reader; // so we can read from the module when calling tags
             long tagdata_base;
@@ -116,6 +117,12 @@ namespace Infinite_module_test{
                 module_file_path = module_path;
                 // and then he said "it's module'n time"
                 if (!File.Exists(module_file_path)) throw new Exception("failed to find specified module file"); // probably redundant
+
+                // get short file name so we can use it for the api
+                if     (module_file_path.Contains("\\any\\")) module_name = "any:";
+                else if (module_file_path.Contains("\\ds\\")) module_name = "ds:";
+                else if (module_file_path.Contains("\\pc\\")) module_name = "pc:";
+                module_name += Path.GetFileName(module_file_path);
 
                 module_reader = new FileStream(module_file_path, FileMode.Open, FileAccess.Read);
 
@@ -256,6 +263,7 @@ namespace Infinite_module_test{
                 public List<block_header> module_blocks; // this is used so we dont have to load every single block to memory to view tags
                 public List<packed_block>? blocks; // nullable so we can safely dispose & reload tags for memory purposes
                 public List<unpacked_module_file> resources; // we shouldn't have a recursive structure, but it should work fine
+                public bool has_been_edited = false; // used to determine whether a tag is eligable for repacking (& requiring repacked blocks)
             }
             public struct packed_block{
                 public packed_block(int uncomp_size, int uncomp_offset, byte[] data){
@@ -402,6 +410,7 @@ namespace Infinite_module_test{
                     
                     unpacked_module_file result = new(file_header);
                     result.blocks = new();
+                    result.has_been_edited = true; // we definitely want to set that
                     // set all the placeholder values 
                     result.header.Unk_0x54 = -1;
                     result.header.DataOffset_and_flags = 0x0000FFFFFFFFFFFF; // do not give the option to set the hd1 flag, theres no point
@@ -541,7 +550,7 @@ namespace Infinite_module_test{
                         // otherwise just read our regular offset
                         else file.header.DataOffset_and_flags = (file.header.DataOffset_and_flags & 0x00ff000000000000) | file_bytes;
 
-                        if (file.blocks == null){ // block has no new data, just toss their original datablocks back in
+                        if (file.blocks == null || file.has_been_edited == false){ // block has no new data or hasn't been marked to repack, just toss their original datablocks back in
                             foreach(block_header block in file.module_blocks){
                                 header_blocks.Add(block);
                                 if (!ishd1) file_bytes += (ulong)block.CompressedSize; 
