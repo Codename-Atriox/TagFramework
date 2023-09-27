@@ -823,7 +823,7 @@ namespace Infinite_module_test{
                 return stringname;
             else return reverse_uint(stringid).ToString("X8");
         }
-        private static uint reverse_uint(uint input){
+        public static uint reverse_uint(uint input){
             uint output = ((input & 0xff) << 24)
                         | ((input & 0xff00) << 8)
                         | ((input & 0xff0000) >> 8)
