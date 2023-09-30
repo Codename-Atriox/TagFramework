@@ -866,7 +866,7 @@ namespace Infinite_module_test{
             //
             XmlDocument reference_xml;
             // resource path, is whole file (aka non-chunked)
-            List<KeyValuePair<byte[], bool>> resource_list;
+            public List<KeyValuePair<byte[], bool>> resource_list;
             bool are_resources_chunked = false; // default as using non-chunked resources, as most tags that use non-chunked have a possibility to have no resources
             int processed_resource_index = 0; // we use this to keep track of which files we've opened
 
