@@ -23,6 +23,7 @@ using System.Xml.Linq;
 using System.Collections.Generic;
 using static System.Reflection.Metadata.BlobBuilder;
 using System.Diagnostics.SymbolStore;
+using System.Net.NetworkInformation;
 
 // TODO:
 // 1. separate loading into its own class, so that all data used is easily disposable
@@ -320,7 +321,7 @@ namespace Infinite_module_test{
 
 
                 }
-                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes, uint tagID, ulong? assetID, int? group){
+                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes, uint? tagID, ulong? assetID, uint? group){
                     // we simply process this tag & break it up into X compressed blocks & either add those blocks to the target tag
                     // or add a brand new tag
 
@@ -330,6 +331,14 @@ namespace Infinite_module_test{
                     // how many blocks to make
                     // etc
 
+
+                    // if tagID is null, we can fetch it from the tag bytes
+                    if (tagID == null){
+                        tag_context context = return_tag_file_contextdata(tag_bytes);
+                        tagID = context.tagID;
+                        assetID = context.new_assetID;
+                        group = get_group_uint_from_string(context.tag_group); // what did we do to convert this again
+                    }
 
                     // new comments
                     // first step is test whether this tag already exists in our list (via tagID)
@@ -375,7 +384,7 @@ namespace Infinite_module_test{
                     }
 
                     throw new Exception("importing new tags is currently unsupported!! (tags must be referenced in the runtime manifest or something, which requires further code stuff)");
-                    // if no matches found then we assume we're creating a new tag header
+                    /*// if no matches found then we assume we're creating a new tag header
                     // check to make sure we actually want to create a new one, else epic exception
                     if (assetID == null || group == null)
                         throw new Exception("couldn't find target id in module, and no extra details provided to generate new tag header!!");
@@ -404,7 +413,45 @@ namespace Infinite_module_test{
                         packed_file.resources.Add(packed_resource);
                         target_module.file_groups[target_folder].Add(new(idname + "_res_" + resource_index, tagname + "_res_" + resource_index, packed_resource, true, -1));
                     }
-                    target_module.file_groups[target_folder].Add(new(idname, tagname, packed_file, false, -1));
+                    target_module.file_groups[target_folder].Add(new(idname, tagname, packed_file, false, -1));*/
+                }
+                struct tag_context {
+                    public uint tagID;
+                    public ulong new_assetID;
+                    public string tag_group;
+                }
+                private tag_context return_tag_file_contextdata(byte[] file_bytes){
+                    tag_context result = new();
+                    // this is a bit complicated, but it should work fine
+                    if (!file_bytes[0..4].SequenceEqual(tag_magic))
+                        throw new Exception("provided file does not have a tagid because its not a tag!!");
+
+                    tag_header header = KindaSafe_SuperCast<tag_header>(file_bytes, 0ul);
+                    int offset = tag_header_size;
+                    offset += header.DependencyCount * tag_dependency_size;
+                    int data_block_offset = offset;
+                    offset += header.DataBlockCount * data_block_size;
+
+                    // we need to iterate through the tag structs to determine which one is the root, then we use that to determine which data block our root struct is at
+                    // all extremely complicated to just read the tagid
+                    for (int i = 0; i < header.TagStructCount; i++){
+                        tag_def_structure current_struct = KindaSafe_SuperCast<tag_def_structure>(file_bytes, (ulong)(offset + (i * tag_def_structure_size)));
+                        if(current_struct.Type == 0){
+                            // then this is our root struct
+                            if (current_struct.TargetIndex == -1 || current_struct.TargetIndex >= header.DataBlockCount)
+                                throw new Exception("invalid struct target index! could not read tag file for ID correctly");
+                            // get the data offset for this guy and then we can fetch the tagID at offset 0x8 from there
+                            data_block datablock = KindaSafe_SuperCast<data_block>(file_bytes, (ulong)(data_block_offset + (current_struct.TargetIndex * data_block_size)));
+                            uint tagID = KindaSafe_SuperCast<uint>(file_bytes, header.HeaderSize + datablock.Offset + 0x8);
+                            result.tagID = tagID;
+                            result.new_assetID = result.tagID << 32; // just do what it seems 343 does and shift the tagid into the upper 32 bits // TODO GENERATE RANDOM NUMBER IN LOWER 32 BITS
+                            result.tag_group = get_tag_group_from_guid(current_struct.GUID_1.ToString("X16") + current_struct.GUID_2.ToString("X16"));
+                            // fixup for that one tag
+                            if (result.tag_group == "cmpsNAME_SIMILAR") result.tag_group = "cmps";
+                            return result;
+                        }
+                    }
+                    throw new Exception("could not find the root struct in the tag! this tag is probably broken");
                 }
                 private unpacked_module_file pack_file(byte[] file_bytes, module_file file_header){
                     
@@ -483,8 +530,10 @@ namespace Infinite_module_test{
                     }
                     return is_compressed;
                 }
-                public int compile(){ // returns changed tags count?
+                public int compile(string output_path){ // returns changed tags count?
                     //target_module.module_reader.Dispose(); // close read handle as we are about to modify the file
+                    if (output_path == target_module.module_file_path)
+                        throw new Exception("cannot overwrite original module file");
 
                     // read module header
                     module_header module_info = target_module.module_info;
@@ -595,7 +644,7 @@ namespace Infinite_module_test{
 
                     // then start writing stuff into the file
                     // we should use a filestream because we are not going to use write all bytes for this one
-                    using (FileStream fsStream = new FileStream("C:\\Users\\Joe bingle\\Downloads\\module structs test\\compiled.module", FileMode.Create))
+                    using (FileStream fsStream = new FileStream(output_path, FileMode.Create))
                     using (BinaryWriter writer = new BinaryWriter(fsStream, Encoding.UTF8)){
                         // write header
                         writer.Write(StructToBytes(module_info));
@@ -767,6 +816,7 @@ namespace Infinite_module_test{
         static Dictionary<uint, string> tagnames = new Dictionary<uint, string>();
         const string stringIDs_path = "files\\outtest9.txt";
         const string tagnames_path = "files\\tagnames.txt";
+        static string? plugin_path = "C:\\Users\\Joe bingle\\Downloads\\plugins";
         public static void init_strings(){
             // generate stringID's list
             var lines = File.ReadLines(stringIDs_path);
@@ -782,6 +832,9 @@ namespace Infinite_module_test{
                 uint tagid = Convert.ToUInt32(parts[0], 16);
                 tagnames[tagid] = parts[1];
             }
+        }
+        public static void init_plugins(){
+
         }
         public static string get_shorttagname(uint tagid) { 
             if (tagnames.TryGetValue(reverse_uint(tagid), out string? tagname))
@@ -818,6 +871,18 @@ namespace Infinite_module_test{
                 return tagname;
             else return reverse_uint(tagid).ToString("X8");
         }
+        // TODO: separate this into the init plugins function
+        public static string get_tag_group_from_guid(string guid){
+            // init tag GUID's & figure out what tag this is
+            if (GUIDs_to_groups == null){
+                GUIDs_to_groups = new();
+                using (StreamReader reader = File.OpenText(plugin_path + "\\GUIDs.txt")){
+                    while (!reader.EndOfStream) {
+                        string[] line = reader.ReadLine().Split(":");
+                        GUIDs_to_groups.Add(line[1], line[0]); // GUID -> group
+            }}}
+            return GUIDs_to_groups[guid];
+        }
         public static string get_stringid(uint stringid){
             if (stringIDs.TryGetValue(reverse_uint(stringid), out string? stringname))
                 return stringname;
@@ -830,17 +895,20 @@ namespace Infinite_module_test{
                         | ((input & 0xff000000) >> 24);
             return output;
         }
+        public static uint get_group_uint_from_string(string group){
+            if (group.Length != 4) throw new Exception("group should be explicitly 4 characters!!");
+            byte[] bytes = Encoding.ASCII.GetBytes(group);
+            return reverse_uint(Convert.ToUInt32(bytes));
+        }
 
         static Dictionary<string, string>? GUIDs_to_groups = null;
         public static byte[] tag_magic = new byte[4] { 0x75, 0x63, 0x73, 0x68 };
         // currently having this as a class, so that we can just copy pointers to this structure for effiency
         public class tag {
-            public tag(string _plugin_path, List<KeyValuePair<byte[], bool>>? resources, XmlNode _reference_root = null)
+            public tag(List<KeyValuePair<byte[], bool>>? resources, XmlNode _reference_root = null)
             {
                 resource_list = resources;
                 reference_root = _reference_root;
-
-                plugin_path = _plugin_path;
 
                 if (resources == null) return; // if no resources then we dont need to iterate, this will mostly be for the non chunked resources i think
                 // iterate through all resource files & ensure they are all the same type, or throw error
@@ -862,7 +930,6 @@ namespace Infinite_module_test{
             public tagdata_struct? root = null;
             public XmlNode reference_root;
             //
-            string plugin_path;
             //
             XmlDocument reference_xml;
             // resource path, is whole file (aka non-chunked)
@@ -962,7 +1029,7 @@ namespace Infinite_module_test{
                     zoneset_info = read_and_convert_to<zoneset_header>(zoneset_header_size, tag_reader);
                     if (header.ZoneSetDataSize > zoneset_header_size){
                         // then we must read the children or DIE
-                        // ZONESETS SEEM TO BE NULLED (BD'd) OUT???
+                        // ZONESETS SEEM TO BE NULLED (BD'd) OUT??? // i have no idea where we saw this
                         // read all the zoneset instances
                         zonesets = new zoneset_instance[zoneset_info.ZonesetCount];
                         // its literally not possible for that to be a null reference, we just set it above
@@ -1009,18 +1076,7 @@ namespace Infinite_module_test{
                             // realistically, we could rename the plugins as their guid value, but that wouldn't be very cool for the people just looking through the files (aka not user friendly)
                             string root_GUID = tag_structs[i].GUID_1.ToString("X16") + tag_structs[i].GUID_2.ToString("X16");
 
-                            // init tag GUID's & figure out what tag this is
-                            if (GUIDs_to_groups == null){
-                                GUIDs_to_groups = new();
-                                
-                                string plugin_guide_path = plugin_path + "\\GUIDs.txt";
-                                // TODO: generate into dictionary
-                                using (StreamReader reader = File.OpenText(plugin_guide_path)){
-                                    while (!reader.EndOfStream) {
-                                        string[] line = reader.ReadLine().Split(":");
-                                        GUIDs_to_groups.Add(line[1], line[0]); // GUID -> group
-                            }}}
-                            string tagus_groupus = GUIDs_to_groups[root_GUID];
+                            string tagus_groupus = get_tag_group_from_guid(root_GUID);
 
                             // setup reference plugin file
                             reference_xml = new XmlDocument();
@@ -1211,7 +1267,7 @@ namespace Infinite_module_test{
                                     if (processed_resource_index >= resource_list.Count)
                                         throw new Exception("indexed bad resource index");
 
-                                    tag child_tag = new(plugin_path, null, reference_root);
+                                    tag child_tag = new(null, reference_root);
                                     if (resource_list[processed_resource_index].Value == false)
                                     { // this is an ERROR, but we do not care because w;' // epic comment fail
 
