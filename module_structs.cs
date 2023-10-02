@@ -321,7 +321,7 @@ namespace Infinite_module_test{
 
 
                 }
-                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes, uint? tagID, ulong? assetID, uint? group){
+                public void pack_tag(byte[] tag_bytes, List<byte[]> resource_bytes, uint? tagID, ulong? assetID, uint? group, bool force_repack_only){
                     // we simply process this tag & break it up into X compressed blocks & either add those blocks to the target tag
                     // or add a brand new tag
 
@@ -356,15 +356,17 @@ namespace Infinite_module_test{
                                 for (int file_index = 0; file_index < v.Value.Count; file_index++){
                                     foreach(var resource in index_file.file.resources){
                                         if (resource == v.Value[file_index].file){
+                                            // we actually throw off the index of 'i' by removing resources, so we need to account for the new index of I
+                                            if (file_index < i) i--; // and well if it equals I then we failed somewhere
                                             // then this file
                                             v.Value.RemoveAt(file_index);
                                             file_index--; // so we dont skip anything
-                                            continue; // if this index was a match, then the last index will not be
+                                            break; // if this index was a match, then the last index will not be
                                 }}}
 
                                 // repack resources
                                 for (int resource_index = 0; resource_index < resource_bytes.Count; resource_index++) {
-                                    // dont even bother using the old file headers for the resources // just generate some new ones
+                                    // dont even bother using the old file headers for the resources, just generate some new ones
                                     module_file new_res_header = new();
                                     new_res_header.GlobalTagId = 0xffffffffu;
                                     new_res_header.ClassId = -1;
@@ -382,7 +384,7 @@ namespace Infinite_module_test{
                             // otherwise continue looking
                         }
                     }
-
+                    if (force_repack_only) throw new Exception("tag does not exist in target module file!! (despite specifying that it has to exist)");
                     throw new Exception("importing new tags is currently unsupported!! (tags must be referenced in the runtime manifest or something, which requires further code stuff)");
                     /*// if no matches found then we assume we're creating a new tag header
                     // check to make sure we actually want to create a new one, else epic exception
@@ -490,17 +492,17 @@ namespace Infinite_module_test{
                     }else{
                         is_using_compression |= pack_chunks(file_bytes, result.blocks, file_bytes.Length, ref offset, ref comp_offset);
                         // set raw file flag
-                        result.header.DataOffset_and_flags |= flag_UseRawfile << 48;
+                        result.header.Flags |= flag_UseRawfile;
                         // non-tag files dont need any data header blocks if they only have 1
                         // NOTE: this doesn't matter as the code in the packer will just tell it to use blocks anyway
                         if (result.blocks.Count > 1)
-                            result.header.DataOffset_and_flags |= flag_UseBlocks << 48;
+                            result.header.Flags |= flag_UseBlocks;
                     }
                     // update file sizes
                     result.header.TotalUncompressedSize = offset;
                     result.header.TotalCompressedSize = comp_offset;
                     // check compression flag if the data was compressed
-                    if (is_using_compression) result.header.DataOffset_and_flags |= flag_UseCompression << 48;
+                    if (is_using_compression) result.header.Flags |= flag_UseCompression;
                     return result;
                 }
                 // returns whether the chunks were compressed
@@ -605,9 +607,9 @@ namespace Infinite_module_test{
                                 if (!ishd1) file_bytes += (ulong)block.CompressedSize; 
                         }}else{ // otherwise we want to compile the updated data for this block
                             file.header.BlockCount = (ushort)file.blocks.Count;
-                            // NOTE: this will overide resources who intentionally have no resources allocated
+                            // NOTE: this will overide resources who intentionally have no blocks allocated
                             // so to play it safe, we will set the using blocks flag just incase, this is not the proper solution however.
-                            file.header.DataOffset_and_flags |= flag_UseBlocks << 48;
+                            file.header.Flags |= flag_UseBlocks;
                             changed_tags++;
 
                             int compressed_offset = 0;
@@ -681,7 +683,8 @@ namespace Infinite_module_test{
 
                                     writer.Write(file.blocks[b].bytes);
                                 }
-                            target_module.flush_module_file(file); // cleanup resources so we dont buildup a huge amount of RAM
+                            // only cleanup resources if we dont have them open for editing
+                            if (file.has_been_edited == false) target_module.flush_module_file(file); // cleanup resources so we dont buildup a huge amount of RAM
                         }
 
 
@@ -957,8 +960,7 @@ namespace Infinite_module_test{
             //MemoryStream? tag_reader; // to be cleaned up after loading
             public bool Load_tag_file(byte[] tag_bytes, string target_guid = "") {
                 //if (!File.Exists(tag_path)) return false; // failed via invalid directory
-                using (MemoryStream tag_reader = new MemoryStream(tag_bytes))
-                {
+                using (MemoryStream tag_reader = new MemoryStream(tag_bytes)){
                     // read the first 4 bytes to make sure this is a tag file
                     byte[] header_test = tag_bytes[0..4];
 
@@ -972,11 +974,9 @@ namespace Infinite_module_test{
                     dependencies = struct_array_assign_bytes<tag_dependency>(header.DependencyCount, tag_dependency_size, tag_reader);
                     // read tag data blocks
                     data_blocks = struct_array_assign_bytes<data_block>(header.DataBlockCount, data_block_size, tag_reader);
-                    foreach (var var in data_blocks)
-                    {
-                        if (var.Section == 0)
-                        {
-
+                    foreach (var var in data_blocks){
+                        if (var.Section == 0){
+                            // debug here to figure out why this stuff is put here?
                         }
                     }
                     // read tag ref structures
@@ -1261,7 +1261,8 @@ namespace Infinite_module_test{
                                     if (resource_index == -1)
                                     { // empty resource reference
                                         // do not append reference if it doesn't exist???
-                                        //append_to.resource_file_refs.Add(tagblock_constant_offset, null);
+                                        // that was dumb, reverted
+                                        append_to.resource_file_refs.Add(tagblock_constant_offset, null);
                                         continue;
                                     }
                                     if (processed_resource_index >= resource_list.Count)
@@ -1328,7 +1329,7 @@ namespace Infinite_module_test{
             private byte[]? tag_resource; // ONLY SEEN TO BE USED IN MAT FILES
             private byte[]? actual_tag_resource; // used in bitmap files
 
-            private byte[]? raw_file_bytes; // used for reading raw files
+            //private byte[]? raw_file_bytes; // used for reading raw files
 
 
             //public byte[]? unmapped_header_data; // used for debugging unmapped structures in headers
@@ -1341,7 +1342,6 @@ namespace Infinite_module_test{
             // TAG COMPILING //
             // //////////// //
             public struct compiled_tag{
-                public uint tagID;
                 public byte[] tag_bytes;
                 public List<byte[]> resource_bytes;
             }
@@ -1422,7 +1422,7 @@ namespace Infinite_module_test{
                     tag_def_structure output_struct = new();
                     output_struct.FieldBlock = -1; // -1 because it doesn't have a parent block
                     output_struct.FieldOffset = 0; // idk if this is what we're supposed to default it to or not
-                    output_struct.Unk_0x12 = 1; // this is seemingly set to 1 for the root struct and no other struct? maybe its also set for the first struct inside a resource??
+                    output_struct.Unk_0x12 = 0; // this is seemingly set to 1 for the root struct and no other struct? maybe its also set for the first struct inside a resource??
                     output_struct.GUID_1 = Convert.ToInt64(at_struct.GUID.Substring(0, 16), 16);
                     output_struct.GUID_2 = Convert.ToInt64(at_struct.GUID.Substring(16), 16);
                     output_struct.TargetIndex = 0; // give it index 0, as that will be the first data block we write
@@ -1751,7 +1751,7 @@ namespace Infinite_module_test{
                                         output_struct.Type = 2; // for standalone tag resource
                                         // then we have to process this as a mini/standalone tag?
                                         // load subtag as bytes, & set target index if valid
-                                        if (_struct.resource_file_refs.TryGetValue((ulong)tagblock_offset, out var thinger) && thinger.blocks.Count() > 0){
+                                        if (_struct.resource_file_refs.TryGetValue((ulong)tagblock_offset, out var thinger) && thinger != null && thinger.blocks.Count() > 0){
                                             tag_compiler resource_compiler = new(_tag);
                                             byte[] resource_bytes = resource_compiler.compile_tag(thinger, true);
                                             output_struct.TargetIndex = 0; // apparently we dont index the resource or anything
@@ -1843,7 +1843,7 @@ namespace Infinite_module_test{
             [FieldOffset(0x08)] public long   GUID_2;
             // ok, so 0 is the main struct, 1 is a tagblock struct, 2 is a non-chunked resource, 3 is chunked resource, 4 is for literal structs (useless?)
             [FieldOffset(0x10)] public ushort  Type;           // "0 = Main Struct, 1 = Tag Block, 2 = Resource, 3 = Custom" 4 seems to be for notable structs (like render geo) idk if we need to include it though
-            [FieldOffset(0x12)] public ushort  Unk_0x12;       // likely padding 
+            [FieldOffset(0x12)] public ushort  Unk_0x12;       // likely padding // as it turns out this is a very important value? setting it incorrectly WILL cause crashes while loading the compile module ingame
                                 
             [FieldOffset(0x14)] public int     TargetIndex;    // "For Main Struct and Tag Block structs, the index of the block containing the struct. For Resource structs, this (probably) is the index of the resource. This can be -1 if the tag field doesn't point to anything (null Tag Blocks or Custom structs)."
             [FieldOffset(0x18)] public int     FieldBlock;     // "The index of the data block containing the tag field which refers to this struct. Can be -1 for the Main Struct."
