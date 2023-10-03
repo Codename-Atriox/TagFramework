@@ -554,7 +554,7 @@ namespace Infinite_module_test{
                             indexed_module_file file = dir.Value[i];
 
                             if (file.is_resource) continue; // we are not processing resources as files, we'll process them directly from tag's resource blocks
-
+                            
                             // process resource table data
                             file.file.header.ResourceCount = (uint)file.file.resources.Count;
                             file.file.header.ResourceIndex = (uint)resources.Count;
@@ -589,27 +589,34 @@ namespace Infinite_module_test{
                     // we're not even going to bother putting code for writing the string table, screw compatibility
 
                     List<block_header> header_blocks = new();
+                    List<module_file> file_headers = new(); // we have to have a separate list for headers, as we cannot assign the edited versions until we finish compiling
+                    // else we'd mess up the offsets when we try to unpack tags to repack them without recompiling them
                     int changed_tags = 0;
                     // now fill out the details for the blocks
                     for (int i = 0; i < files.Count; i++) {
                         unpacked_module_file file = files[i];
-
-                        file.header.BlockIndex = (uint)header_blocks.Count;
-                        bool ishd1 = ((file.header.get_dataflags() & flag2_UseHd1) == 1);
+                        module_file file_header = file.header;
+                        file_header.BlockIndex = (uint)header_blocks.Count;
+                        bool ishd1 = ((file_header.get_dataflags() & flag2_UseHd1) == 1);
                         // check to see if this is a hd1 resource, if so then set the addres to -1 basically & do not allocate any room
-                        if (ishd1) file.header.DataOffset_and_flags = (file.header.DataOffset_and_flags & 0x00ff000000000000) | 0x0000FFFFFFFFFFFF;
+                        if (ishd1) file_header.DataOffset_and_flags = (file_header.DataOffset_and_flags & 0x00ff000000000000) | 0x0000FFFFFFFFFFFF;
                         // otherwise just read our regular offset
-                        else file.header.DataOffset_and_flags = (file.header.DataOffset_and_flags & 0x00ff000000000000) | file_bytes;
+                        else file_header.DataOffset_and_flags = (file_header.DataOffset_and_flags & 0x00ff000000000000) | file_bytes;
+
+                        // clean up the unknown junk things that we dont know do anything
+                        file_header.Unk_0x00 = 0;
+                        file_header.Unk_0x54 = -1;
+                        file_header.AssetChecksum = 0ul;
 
                         if (file.blocks == null || file.has_been_edited == false){ // block has no new data or hasn't been marked to repack, just toss their original datablocks back in
                             foreach(block_header block in file.module_blocks){
                                 header_blocks.Add(block);
                                 if (!ishd1) file_bytes += (ulong)block.CompressedSize; 
                         }}else{ // otherwise we want to compile the updated data for this block
-                            file.header.BlockCount = (ushort)file.blocks.Count;
+                            file_header.BlockCount = (ushort)file.blocks.Count;
                             // NOTE: this will overide resources who intentionally have no blocks allocated
                             // so to play it safe, we will set the using blocks flag just incase, this is not the proper solution however.
-                            file.header.Flags |= flag_UseBlocks;
+                            file_header.Flags |= flag_UseBlocks;
                             changed_tags++;
 
                             int compressed_offset = 0;
@@ -635,7 +642,11 @@ namespace Infinite_module_test{
                                 file.module_blocks.Add(current_header);
                             }
                             if (!ishd1) file_bytes += (ulong)compressed_offset; // do not allocate bytes for hd1 tagdata, as we're just pretending it doesn't exist
-                    }}
+                        }
+                        // then add the updated header to the list
+                        file_headers.Add(file_header);
+                    }
+                    if (file_headers.Count != files.Count) throw new Exception("somehow our file header list count does not match our file list count!!");
 
                     // lastly we need to update the module header to match the new information
                     module_info.BlockCount = header_blocks.Count;
@@ -651,8 +662,8 @@ namespace Infinite_module_test{
                         // write header
                         writer.Write(StructToBytes(module_info));
                         // write file headers
-                        foreach (unpacked_module_file file in files)
-                            writer.Write(StructToBytes(file.header));
+                        foreach (module_file header in file_headers)
+                            writer.Write(StructToBytes(header));
                         // write resource table
                         foreach (int resource_index in resource_table)
                             writer.Write(resource_index);
@@ -670,21 +681,27 @@ namespace Infinite_module_test{
                         // as long as we use the same algorithm we should not have any issues with aligning the data
                         for (int i = 0; i < files.Count; i++){
                             unpacked_module_file file = files[i];
+                            module_file updated_header = file_headers[i];
                             target_module.unpack_module_file(file);
                             if (file.blocks == null) throw new Exception("failed to unpack tag's blocks!");
                             // only write bytes if its not a hd1 file
-                            if ((file.header.get_dataflags() & flag2_UseHd1) == 0)
-                                for (int b = 0; b < file.blocks.Count; b++){
+                            if ((file.header.get_dataflags() & flag2_UseHd1) == 0){
+
+                                for (int b = 0; b < file.blocks.Count; b++)
+                                {
                                     // do some error checking to make sure the code worked exactly how we thought it would
-                                    if ((writer.BaseStream.Position - target_module.tagdata_base) != file.header.get_dataoffset() + header_blocks[(int)file.header.BlockIndex + b].CompressedOffset)
+                                    if ((writer.BaseStream.Position - target_module.tagdata_base) != updated_header.get_dataoffset() + header_blocks[(int)updated_header.BlockIndex + b].CompressedOffset)
                                         throw new Exception("offset fail! bad offset when writing tag data!!!");
-                                    if (file.blocks[b].bytes.Length != header_blocks[(int)file.header.BlockIndex + b].CompressedSize)
+                                    if (file.blocks[b].bytes.Length != header_blocks[(int)updated_header.BlockIndex + b].CompressedSize)
                                         throw new Exception("incorrect block size when writing tag data!");
 
                                     writer.Write(file.blocks[b].bytes);
                                 }
+                            }
                             // only cleanup resources if we dont have them open for editing
                             if (file.has_been_edited == false) target_module.flush_module_file(file); // cleanup resources so we dont buildup a huge amount of RAM
+                            // then we can apply the updated header, as we've officially finished reading this tag from the original file
+                            file.header = updated_header;
                         }
 
 
@@ -901,7 +918,7 @@ namespace Infinite_module_test{
         public static uint get_group_uint_from_string(string group){
             if (group.Length != 4) throw new Exception("group should be explicitly 4 characters!!");
             byte[] bytes = Encoding.ASCII.GetBytes(group);
-            return reverse_uint(Convert.ToUInt32(bytes));
+            return reverse_uint(BitConverter.ToUInt32(bytes));
         }
 
         static Dictionary<string, string>? GUIDs_to_groups = null;
@@ -931,6 +948,7 @@ namespace Infinite_module_test{
             // load tag outputs
             public bool Initialized = false;
             public tagdata_struct? root = null;
+            public byte[] unmarked_header_data;
             public XmlNode reference_root;
             //
             //
@@ -1026,6 +1044,7 @@ namespace Infinite_module_test{
                     //    tag_reader.Read(local_string_table, 0, (int)header.StringTableSize);
                     //}
                     // read the zoneset header
+                    long pre_zoneset_position = tag_reader.Position;
                     zoneset_info = read_and_convert_to<zoneset_header>(zoneset_header_size, tag_reader);
                     if (header.ZoneSetDataSize > zoneset_header_size){
                         // then we must read the children or DIE
@@ -1046,10 +1065,23 @@ namespace Infinite_module_test{
                         // we forgot to read the zoneset header bytes?
 
                     }
+                    // verify that we read the entire zoneset header
+                    if (tag_reader.Position - pre_zoneset_position != header.ZoneSetDataSize){
+                        throw new Exception("failed to read the zonest data correctly!");
+                    }
 
-                    // TODO: we need to cast this below read as the rest of the structures, as we're reading this section twice??
 
                     // end of header, double check to make sure we read it all correctly // APPARENTLY THERES A LOT OF CASES WITH DATA THAT WE DONT READ !!!!!!!!!!!!!! FU BUNGIE
+                    if (tag_reader.Position != header.HeaderSize){
+                        if (tag_reader.Position > header.HeaderSize) throw new Exception("tag reader read more bytes in the header than supposed to!");
+
+                        int extra_junk_size = (int)(header.HeaderSize - tag_reader.Position);
+                        unmarked_header_data = new byte[extra_junk_size];
+                        tag_reader.Read(unmarked_header_data, 0, extra_junk_size);
+                    }
+                    else unmarked_header_data = new byte[0];
+
+                    // TODO: we need to cast this below read as the rest of the structures, as we're reading this section twice??
                     // read tag header data (so we can access any tag data that gets stored at the end)
                     header_data = read_at(0, (int)header.HeaderSize, tag_reader);
                     // read tag data
@@ -1081,8 +1113,30 @@ namespace Infinite_module_test{
                             // setup reference plugin file
                             reference_xml = new XmlDocument();
                             reference_xml.Load(plugin_path + "\\" + tagus_groupus + ".xml");
-                            //boingo zoingo; // add error handling here or something
                             reference_root = reference_xml.SelectSingleNode("root");
+                            // do a runtime edit of the xmls to notate which structs have the unknown values set, so we can set them when recompiling
+                            foreach (var struc in tag_structs){
+                                if (struc.Type == 0 || struc.Type == 1 || struc.Type == 4){
+                                    // error check
+                                    if (struc.Unk_0x12 > 1){
+                                        throw new Exception("unexpected unk type for non-chunked resource");
+                                    // if unk is set to 1, then write this to the xml
+                                    } else if (struc.Unk_0x12 == 1){
+                                        string struc_guid = struc.GUID_1.ToString("X16") + struc.GUID_2.ToString("X16");
+                                        XmlNode? target_node = reference_root.SelectSingleNode("_" + struc_guid);
+                                        if (target_node == null) throw new Exception("failed to match GUID of important struct up with xml plugin struct");
+                                        // now write the runtime attribute
+                                        XmlAttribute attr = reference_xml.CreateAttribute("UNK0x12");
+                                        target_node.Attributes.Append(attr);
+                                }} else if (struc.Type == 2) {
+                                    if (struc.Unk_0x12 != 0) throw new Exception("unexpected unk type for non-chunked resource struct");
+                                } else if (struc.Type == 3) {
+                                    if (struc.Unk_0x12 != 1) throw new Exception("unexpected unk type for chunked resource struct");
+                                } else {
+                                    throw new Exception("unexpected struct type!! (this needs to be investigated)");
+                                }
+                            }
+
 
 
                             root = process_highlevel_struct(i, root_GUID);
@@ -1341,6 +1395,14 @@ namespace Infinite_module_test{
             // ////////////// //
             // TAG COMPILING //
             // //////////// //
+            private bool is_unk0x12_struct(long guid1, long guid2)
+                => is_unk0x12_struct(guid1.ToString("X16") + guid2.ToString("X16"));
+            private bool is_unk0x12_struct(string guid){
+                XmlNode? target_node = reference_root.SelectSingleNode("_" + guid);
+                if (target_node.Attributes["UNK0x12"] != null)
+                    return true;
+                return false;
+            }
             public struct compiled_tag{
                 public byte[] tag_bytes;
                 public List<byte[]> resource_bytes;
@@ -1422,10 +1484,10 @@ namespace Infinite_module_test{
                     tag_def_structure output_struct = new();
                     output_struct.FieldBlock = -1; // -1 because it doesn't have a parent block
                     output_struct.FieldOffset = 0; // idk if this is what we're supposed to default it to or not
-                    output_struct.Unk_0x12 = 0; // this is seemingly set to 1 for the root struct and no other struct? maybe its also set for the first struct inside a resource??
                     output_struct.GUID_1 = Convert.ToInt64(at_struct.GUID.Substring(0, 16), 16);
                     output_struct.GUID_2 = Convert.ToInt64(at_struct.GUID.Substring(16), 16);
                     output_struct.TargetIndex = 0; // give it index 0, as that will be the first data block we write
+                    output_struct.Unk_0x12 = (_tag.is_unk0x12_struct(output_struct.GUID_1, output_struct.GUID_2))? (ushort)1 : (ushort)0; // why cant i just cast this ONCE instead of this mess
                     output_structs.Add(output_struct);
 
                     // convert all the organized data back into its compiled blocks
@@ -1453,6 +1515,7 @@ namespace Infinite_module_test{
                     }
                     output_tag_header.ZoneSetDataSize = (uint)zoneset_size;
                     tag_size += zoneset_size;
+                    tag_size += _tag.unmarked_header_data.Length; // since we apparently need to include this junk
                     int total_header_size = tag_size;
 
                     tag_size += output_tagdata.Count();
@@ -1512,6 +1575,12 @@ namespace Infinite_module_test{
                         current_offset += CopyArrayStructTo(zoneset_inst.zonset_footer_tags, output, current_offset);
                         current_offset += CopyArrayStructTo(zoneset_inst.zonset_parents, output, current_offset);
                     }
+                    // and then our epic unmarked data (FU bungi)
+                    if (_tag.unmarked_header_data.Length > 0){
+                        Array.Copy(_tag.unmarked_header_data, 0, output, current_offset, _tag.unmarked_header_data.Length);
+                        current_offset += _tag.unmarked_header_data.Count();
+                    }
+
                     // do a basic block copy on these as its probably quicker
                     if (output_tagdata.Count() > 0){
                         byte[] src = output_tagdata.ToArray();
@@ -1590,6 +1659,20 @@ namespace Infinite_module_test{
                             // these two are just for iterating through the structs, we dont actually need to do anything special to compile them
                             case 0x38:{ // _field_struct 
                                     string next_guid = node.Attributes?["GUID"]?.Value;
+                                    // test whether this struct is marked as unk0x12
+                                    if (_tag.is_unk0x12_struct(next_guid)){
+                                        tag_def_structure output_struct = new();
+                                        output_struct.Type = 4;
+                                        output_struct.FieldBlock = field_block;
+                                        output_struct.FieldOffset = (uint)field_offset;
+                                        // convert guid
+                                        output_struct.GUID_1 = Convert.ToInt64(next_guid.Substring(0, 16), 16);
+                                        output_struct.GUID_2 = Convert.ToInt64(next_guid.Substring(16), 16);
+                                        output_struct.Unk_0x12 = 1;
+                                        output_struct.TargetIndex = -1;
+                                        output_structs.Add(output_struct);
+                                    }
+
                                     XmlNode next_node = _tag.reference_root.SelectSingleNode("_" + next_guid);
 
                                     compile_struct(next_node, _struct, struct_def_index, field_block, field_offset, tagblock_offset);
@@ -1598,6 +1681,9 @@ namespace Infinite_module_test{
                                     int array_length = Convert.ToInt32(node.Attributes?["Count"]?.Value);
 
                                     string next_guid = node.Attributes?["GUID"]?.Value;
+                                    // we could just copy paste the above struct but i'd rather not
+                                    if (_tag.is_unk0x12_struct(next_guid)) throw new Exception("array marked with Unk0x12??? need to investigate this");
+                                    
                                     XmlNode next_node = _tag.reference_root.SelectSingleNode("_" + next_guid);
                                     // make sure this is called on the child node not the current node 
                                     int array_struct_size = Convert.ToInt32(next_node.Attributes?["Size"]?.Value, 16);
@@ -1616,11 +1702,11 @@ namespace Infinite_module_test{
                                     output_struct.Type = 1;
                                     output_struct.FieldBlock = field_block;
                                     output_struct.FieldOffset = (uint)field_offset;
-                                    output_struct.Unk_0x12 = 0;
                                     // convert guid
                                     string next_guid = node.Attributes?["GUID"]?.Value;
                                     output_struct.GUID_1 = Convert.ToInt64(next_guid.Substring(0, 16), 16);
                                     output_struct.GUID_2 = Convert.ToInt64(next_guid.Substring(16), 16);
+                                    output_struct.Unk_0x12 = (_tag.is_unk0x12_struct(output_struct.GUID_1, output_struct.GUID_2))? (ushort)1 : (ushort)0; // why cant i just cast this ONCE instead of this mess
                                     // fill in the target index for the struct
                                     if (_struct.tag_block_refs.TryGetValue((ulong)tagblock_offset, out var thinger) && thinger.blocks.Count() > 0){
                                         output_struct.TargetIndex = output_data_blocks.Count();
@@ -1740,7 +1826,6 @@ namespace Infinite_module_test{
                                     tag_def_structure output_struct = new();
                                     output_struct.FieldBlock = field_block;
                                     output_struct.FieldOffset = (uint)field_offset;
-                                    output_struct.Unk_0x12 = 0;
                                     // convert guid
                                     string next_guid = node.Attributes?["GUID"]?.Value;
                                     output_struct.GUID_1 = Convert.ToInt64(next_guid.Substring(0, 16), 16);
@@ -1749,6 +1834,7 @@ namespace Infinite_module_test{
                                     int is_chunked = BitConverter.ToInt32(_struct.tag_data[(tagblock_offset + 12)..(tagblock_offset + 16)]);
                                     if (is_chunked == 0){
                                         output_struct.Type = 2; // for standalone tag resource
+                                        output_struct.Unk_0x12 = 0;
                                         // then we have to process this as a mini/standalone tag?
                                         // load subtag as bytes, & set target index if valid
                                         if (_struct.resource_file_refs.TryGetValue((ulong)tagblock_offset, out var thinger) && thinger != null && thinger.blocks.Count() > 0){
@@ -1761,6 +1847,7 @@ namespace Infinite_module_test{
                                         output_structs.Add(output_struct); // both dont interfere with the order so we can run this after
                                     } else{
                                         output_struct.Type = 3; // for chunked resource
+                                        output_struct.Unk_0x12 = 1;
                                         // otherwise this is just a chunk file resource, and we'll append the resource in the main compile function
                                         // and the struct itself is contained within the main tag file, so just pretend this is a tagblock basically
                                         // fill in the target index for the struct
