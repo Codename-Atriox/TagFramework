@@ -925,10 +925,11 @@ namespace Infinite_module_test{
         public static byte[] tag_magic = new byte[4] { 0x75, 0x63, 0x73, 0x68 };
         // currently having this as a class, so that we can just copy pointers to this structure for effiency
         public class tag {
-            public tag(List<KeyValuePair<byte[], bool>>? resources, XmlNode _reference_root = null)
+            public tag(List<KeyValuePair<byte[], bool>>? resources, XmlNode? _reference_root = null, XmlDocument? _reference_xml = null)
             {
                 resource_list = resources;
                 reference_root = _reference_root;
+                reference_xml = _reference_xml;
 
                 if (resources == null) return; // if no resources then we dont need to iterate, this will mostly be for the non chunked resources i think
                 // iterate through all resource files & ensure they are all the same type, or throw error
@@ -949,10 +950,10 @@ namespace Infinite_module_test{
             public bool Initialized = false;
             public tagdata_struct? root = null;
             public byte[] unmarked_header_data;
-            public XmlNode reference_root;
+            public XmlNode? reference_root;
             //
             //
-            XmlDocument reference_xml;
+            XmlDocument? reference_xml;
             // resource path, is whole file (aka non-chunked)
             public List<KeyValuePair<byte[], bool>> resource_list;
             bool are_resources_chunked = false; // default as using non-chunked resources, as most tags that use non-chunked have a possibility to have no resources
@@ -1142,7 +1143,7 @@ namespace Infinite_module_test{
                             root = process_highlevel_struct(i, root_GUID);
                             break;
                 }}}else{ // is a subtag
-                    // reference_xml = inherited;
+                    // reference_xml = inherited; // we actually forgot to inherit this
                     // reference_root = inherited;
                     for (uint i = 0; i < tag_structs.Length; i++){
                         if (tag_structs[i].Type == 0){
@@ -1178,13 +1179,22 @@ namespace Infinite_module_test{
             {
                 tagdata_struct output_struct = new();
                 output_struct.GUID = GUID;
+
+                XmlNode currentStruct = reference_root.SelectSingleNode("_" + GUID);
+
+                // we need to test whether this guid is correct or not // i think something is broken on 343's end and they assign the wrong guid's to some, so we have to account for that
+                string packed_GUID = tag_structs[struct_index].GUID_1.ToString("X16") + tag_structs[struct_index].GUID_2.ToString("X16");
+                if (packed_GUID != GUID){
+                    // then we have to write the target packed guid to the xml node so we can fetch that again later
+                    XmlAttribute attr = reference_xml.CreateAttribute("Override");
+                    attr.Value = packed_GUID;
+                    currentStruct.Attributes.Append(attr);
+                }
+
                 // test if this struct is null, nothing needs to be read if it is
                 if (tag_structs[struct_index].TargetIndex == -1) return output_struct;
 
 
-                //string GUID = tag_structs[struct_index].GUID_1.ToString("X16") + tag_structs[struct_index].GUID_2.ToString("X16");
-                // now we can select the struct
-                XmlNode currentStruct = reference_root.SelectSingleNode("_" + GUID);
 
                 int referenced_array_size = Convert.ToInt32(currentStruct.Attributes["Size"].Value, 16);
 
@@ -1322,7 +1332,7 @@ namespace Infinite_module_test{
                                     if (processed_resource_index >= resource_list.Count)
                                         throw new Exception("indexed bad resource index");
 
-                                    tag child_tag = new(null, reference_root);
+                                    tag child_tag = new(null, reference_root, reference_xml);
                                     if (resource_list[processed_resource_index].Value == false)
                                     { // this is an ERROR, but we do not care because w;' // epic comment fail
 
@@ -1395,13 +1405,8 @@ namespace Infinite_module_test{
             // ////////////// //
             // TAG COMPILING //
             // //////////// //
-            private bool is_unk0x12_struct(long guid1, long guid2)
-                => is_unk0x12_struct(guid1.ToString("X16") + guid2.ToString("X16"));
-            private bool is_unk0x12_struct(string guid){
-                XmlNode? target_node = reference_root.SelectSingleNode("_" + guid);
-                if (target_node.Attributes["UNK0x12"] != null)
-                    return true;
-                return false;
+            private bool is_unk0x12_struct(XmlNode target_node){
+                return (target_node.Attributes["UNK0x12"] != null);
             }
             public struct compiled_tag{
                 public byte[] tag_bytes;
@@ -1447,7 +1452,7 @@ namespace Infinite_module_test{
                 List<byte> output_tagdata;
                 List<byte> output_tag_resource;
                 List<byte> output_actual_tag_resource;
-
+                byte[] extra_unknown_headerdata;
 
                 // we need to support compiling tag segements, meainging we need to take root struct as a variable, so we can target resources
                 private byte[] compile_tag(tagdata_struct at_struct, bool resource_mode) {
@@ -1465,14 +1470,27 @@ namespace Infinite_module_test{
                     output_tag_fixup_references = new();
                     stringtable = new(); // we should just nullk this out as we dont use it
 
+                    // clear useless junk
+                    output_tag_header.AssetChecksum = 0;
+
+                    // write out the alt guid from the whatever struct we're given
+                    XmlNode root_node = _tag.reference_root.SelectSingleNode("_" + at_struct.GUID);
+                    output_tag_header.RootStructAltGUID = Convert.ToUInt64(root_node.Attributes["Alt"].Value, 16);
+
                     // we are probably not ever going to use this, so we could probably just export as they are
                     // if we're compiling a resource, then we probably do not want to inherit zonset data
                     if (resource_mode){
                         // already nulled or something // output_zoneset_header;
+                        output_zoneset_header.Unk_0x00 = 2; // this is required or halo will fail to load
                         output_zonest_instances = new();
+                        output_tag_header.Unk_0x34 = 0; // idk what this is but resources tend to have different values
+                        extra_unknown_headerdata = new byte[0];
+                        output_tag_header.IsResource = 1;
                     } else{
                         output_zoneset_header = _tag.zoneset_info;
                         output_zonest_instances = _tag.zonesets.ToList();
+                        extra_unknown_headerdata = _tag.unmarked_header_data;
+                        output_tag_header.IsResource = 0;
                     }
 
 
@@ -1487,7 +1505,10 @@ namespace Infinite_module_test{
                     output_struct.GUID_1 = Convert.ToInt64(at_struct.GUID.Substring(0, 16), 16);
                     output_struct.GUID_2 = Convert.ToInt64(at_struct.GUID.Substring(16), 16);
                     output_struct.TargetIndex = 0; // give it index 0, as that will be the first data block we write
-                    output_struct.Unk_0x12 = (_tag.is_unk0x12_struct(output_struct.GUID_1, output_struct.GUID_2))? (ushort)1 : (ushort)0; // why cant i just cast this ONCE instead of this mess
+                    // then check for the special unk12 indicator
+                    if (_tag.is_unk0x12_struct(root_node)) output_struct.Unk_0x12 = 1;
+                    else output_struct.Unk_0x12 = 0;
+
                     output_structs.Add(output_struct);
 
                     // convert all the organized data back into its compiled blocks
@@ -1515,7 +1536,7 @@ namespace Infinite_module_test{
                     }
                     output_tag_header.ZoneSetDataSize = (uint)zoneset_size;
                     tag_size += zoneset_size;
-                    tag_size += _tag.unmarked_header_data.Length; // since we apparently need to include this junk
+                    tag_size += extra_unknown_headerdata.Length; // since we apparently need to include this junk
                     int total_header_size = tag_size;
 
                     tag_size += output_tagdata.Count();
@@ -1576,9 +1597,9 @@ namespace Infinite_module_test{
                         current_offset += CopyArrayStructTo(zoneset_inst.zonset_parents, output, current_offset);
                     }
                     // and then our epic unmarked data (FU bungi)
-                    if (_tag.unmarked_header_data.Length > 0){
-                        Array.Copy(_tag.unmarked_header_data, 0, output, current_offset, _tag.unmarked_header_data.Length);
-                        current_offset += _tag.unmarked_header_data.Count();
+                    if (extra_unknown_headerdata.Length > 0){
+                        Array.Copy(extra_unknown_headerdata, 0, output, current_offset, extra_unknown_headerdata.Length);
+                        current_offset += extra_unknown_headerdata.Count();
                     }
 
                     // do a basic block copy on these as its probably quicker
@@ -1659,21 +1680,25 @@ namespace Infinite_module_test{
                             // these two are just for iterating through the structs, we dont actually need to do anything special to compile them
                             case 0x38:{ // _field_struct 
                                     string next_guid = node.Attributes?["GUID"]?.Value;
+                                    XmlNode next_node = _tag.reference_root.SelectSingleNode("_" + next_guid);
                                     // test whether this struct is marked as unk0x12
-                                    if (_tag.is_unk0x12_struct(next_guid)){
+                                    if (_tag.is_unk0x12_struct(next_node)){
                                         tag_def_structure output_struct = new();
                                         output_struct.Type = 4;
                                         output_struct.FieldBlock = field_block;
                                         output_struct.FieldOffset = (uint)field_offset;
+                                        output_struct.Unk_0x12 = 1;
+                                        output_struct.TargetIndex = -1;
+                                        // update guid if it has an override
+                                        if (next_node.Attributes["Override"] != null)
+                                            next_guid = next_node.Attributes["Override"].Value;
                                         // convert guid
                                         output_struct.GUID_1 = Convert.ToInt64(next_guid.Substring(0, 16), 16);
                                         output_struct.GUID_2 = Convert.ToInt64(next_guid.Substring(16), 16);
-                                        output_struct.Unk_0x12 = 1;
-                                        output_struct.TargetIndex = -1;
+
                                         output_structs.Add(output_struct);
                                     }
 
-                                    XmlNode next_node = _tag.reference_root.SelectSingleNode("_" + next_guid);
 
                                     compile_struct(next_node, _struct, struct_def_index, field_block, field_offset, tagblock_offset);
                                 }break;
@@ -1682,9 +1707,9 @@ namespace Infinite_module_test{
 
                                     string next_guid = node.Attributes?["GUID"]?.Value;
                                     // we could just copy paste the above struct but i'd rather not
-                                    if (_tag.is_unk0x12_struct(next_guid)) throw new Exception("array marked with Unk0x12??? need to investigate this");
-                                    
                                     XmlNode next_node = _tag.reference_root.SelectSingleNode("_" + next_guid);
+                                    if (_tag.is_unk0x12_struct(next_node)) throw new Exception("array marked with Unk0x12??? need to investigate this");
+                                    
                                     // make sure this is called on the child node not the current node 
                                     int array_struct_size = Convert.ToInt32(next_node.Attributes?["Size"]?.Value, 16);
 
@@ -1704,9 +1729,16 @@ namespace Infinite_module_test{
                                     output_struct.FieldOffset = (uint)field_offset;
                                     // convert guid
                                     string next_guid = node.Attributes?["GUID"]?.Value;
+                                    XmlNode next_node = _tag.reference_root.SelectSingleNode("_" + next_guid);
+
+                                    // update guid if it has an override
+                                    if (next_node.Attributes["Override"] != null)
+                                        next_guid = next_node.Attributes["Override"].Value;
+
                                     output_struct.GUID_1 = Convert.ToInt64(next_guid.Substring(0, 16), 16);
                                     output_struct.GUID_2 = Convert.ToInt64(next_guid.Substring(16), 16);
-                                    output_struct.Unk_0x12 = (_tag.is_unk0x12_struct(output_struct.GUID_1, output_struct.GUID_2))? (ushort)1 : (ushort)0; // why cant i just cast this ONCE instead of this mess
+                                    if (_tag.is_unk0x12_struct(next_node)) output_struct.Unk_0x12 = 1;
+                                    else output_struct.Unk_0x12 = 0;
                                     // fill in the target index for the struct
                                     if (_struct.tag_block_refs.TryGetValue((ulong)tagblock_offset, out var thinger) && thinger.blocks.Count() > 0){
                                         output_struct.TargetIndex = output_data_blocks.Count();
@@ -1828,6 +1860,12 @@ namespace Infinite_module_test{
                                     output_struct.FieldOffset = (uint)field_offset;
                                     // convert guid
                                     string next_guid = node.Attributes?["GUID"]?.Value;
+
+                                    // check for overrides, which hopefully should never exist on resources?
+                                    XmlNode next_node = _tag.reference_root.SelectSingleNode("_" + next_guid);
+                                    if (next_node.Attributes["Override"] != null)
+                                        next_guid = next_node.Attributes["Override"].Value;
+
                                     output_struct.GUID_1 = Convert.ToInt64(next_guid.Substring(0, 16), 16);
                                     output_struct.GUID_2 = Convert.ToInt64(next_guid.Substring(16), 16);
 
@@ -1873,7 +1911,7 @@ namespace Infinite_module_test{
         {
             [FieldOffset(0x00)] public int     Magic; 
             [FieldOffset(0x04)] public uint    Version; 
-            [FieldOffset(0x08)] public ulong   Unk_0x08; // some hash thing aswell, could be combined with the next value?
+            [FieldOffset(0x08)] public ulong   RootStructAltGUID; // this is actually a secondary GUID to identify the root struct // causes crashes if not correct
             [FieldOffset(0x10)] public ulong   AssetChecksum;  
             // these cant be uints because of how the code is setup, should probably assert if -1
             [FieldOffset(0x18)] public int     DependencyCount;
@@ -1885,7 +1923,7 @@ namespace Infinite_module_test{
             [FieldOffset(0x2C)] public uint    StringTableSize;
                                 
             [FieldOffset(0x30)] public uint    ZoneSetDataSize;    // this is the literal size in bytes
-            [FieldOffset(0x34)] public uint    Unk_0x34; // could be the block count that this file is broken up into?
+            [FieldOffset(0x34)] public uint    Unk_0x34; // could be the block count that this file is broken up into? // important value, game will crash if incorrect
                                 
             [FieldOffset(0x38)] public uint    HeaderSize; 
             [FieldOffset(0x3C)] public uint    DataSize; 
@@ -1897,7 +1935,7 @@ namespace Infinite_module_test{
             [FieldOffset(0x4A)] public byte    ResourceDataAligment; 
             [FieldOffset(0x4B)] public byte    ActualResourceDataAligment; 
 
-            [FieldOffset(0x4C)] public int     Unk_0x4C; // padding?
+            [FieldOffset(0x4C)] public int     IsResource; // not quite sure on this one yet, need to check some more tags
         }
 
 
