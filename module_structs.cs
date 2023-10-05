@@ -1904,6 +1904,97 @@ namespace Infinite_module_test{
 
                 
             }
+
+
+
+
+            // //////////////// //
+            // TAG EDITING API //
+            // ////////////// //
+            /* PATH EXAMPLES 
+               "super node parent mappings[0].parent_super_node_index" // param nested in array type (tagblock)
+               "build identifier.structure importer version" // param nested in struct
+            */
+            public tagdata_struct get_tagblock(thing current_block, string block_guid, string target){
+                // we need to find the xml node so we can get the offset, then we can use that to get from the dictionary
+                ulong offset = 0;
+                recurse_block_search(ref current_block, block_guid, target, ref offset);
+                // supports both tagblocks & resource blocks because why not
+                if (current_block.tag_block_refs.TryGetValue(offset, out tagdata_struct? next_tagblock))
+                    return next_tagblock;
+                else if (current_block.resource_file_refs.TryGetValue(offset, out tagdata_struct? next_resource))
+                    return next_resource;
+                else throw new Exception("tagblock path '" + target + "' does not exist");
+            }
+
+
+
+            // take in an arbitrary parameter path and process it, and then return the details so other functions can handle it however they want
+            // especially with the ability to return a different block, as we still need to beable to read the bytes
+            private XmlNode recurse_block_search(ref thing current_block, string current_guid, string target, ref ulong resulting_offset){
+                XmlNode current_struct = reference_root.SelectSingleNode("_"+current_guid);
+                // if the target contains a '.', then its contained inside of a struct, look for that struct
+                int char_pos = target.IndexOf('.', StringComparison.Ordinal);
+                if (char_pos > 0) {
+                    string next_struct = target.Substring(0, char_pos);
+                    string next_target = target.Substring(char_pos + 1);
+                    // if it ends with square brackets then its inside of an array
+                    int brack_pos = target.IndexOf('[', StringComparison.Ordinal);
+                    if (brack_pos > 0 && next_struct.Last() == ']') {
+                        string array_name = next_struct.Substring(0, brack_pos);
+                        uint array_index = Convert.ToUInt32(next_struct.Substring(brack_pos+1, next_struct.Length - brack_pos+1));
+                        // this could be either an array or a tagblock
+                        XmlNode? next = current_struct.SelectSingleNode("[@Name = '" + array_name + "']");
+                        if (next == null) throw new Exception("path array '" + array_name + "' did not result any matches");
+                        uint offset = Convert.ToUInt32(next.Attributes["Offset"].Value, 16);
+                        resulting_offset += offset;
+                        string next_guid = next.Attributes["GUID"].Value;
+
+                        if (next.Name == "_39") { // array
+                            uint struct_max = Convert.ToUInt32(next.Attributes["Count"].Value);
+                            XmlNode array_struct = reference_root.SelectSingleNode("_"+ next_guid);
+                            uint struct_size = Convert.ToUInt32(array_struct.Attributes["Size"].Value, 16);
+                            // check to make sure our target index is not out of bounds
+                            if (array_index >= struct_max) throw new Exception("path array '" + array_name + "' index '" + array_index + "' was out of bounds");
+
+                            resulting_offset += array_index * struct_size;
+                            return recurse_block_search(ref current_block, next_guid, next_target, ref resulting_offset);
+                        } else if (next.Name == "_40") { // tagblock
+                            // we have to get the next block from the tagthing
+                            if (current_block.tag_block_refs.TryGetValue(resulting_offset, out tagdata_struct? next_tagblock) && next_tagblock.blocks.Count > 0){
+                                if (array_index >= next_tagblock.blocks.Count) throw new Exception("path tagblock array '" + array_name + "' index '" + array_index + "' was out of bounds");
+                                current_block = next_tagblock.blocks[(int)array_index];
+                                resulting_offset = 0;
+                                return recurse_block_search(ref current_block, next_tagblock.GUID, next_target, ref resulting_offset);
+                            } else throw new Exception("path tagblock struct '" + next_struct + "' was a valid path but the resource does not exist");
+                        } else throw new Exception("path array '" + array_name + "' was not a valid array type");
+
+                    } else { // process as struct
+                        XmlNode? next = current_struct.SelectSingleNode("[@Name = '" + next_struct + "']");
+                        // it could be either a struct type or resource type
+                        if (next == null) throw new Exception("path struct '" + next_struct + "' did not result any matches");
+                        uint offset = Convert.ToUInt32(next.Attributes["Offset"].Value, 16);
+                        resulting_offset += offset;
+                        string next_guid = next.Attributes["GUID"].Value;
+
+                        if (next.Name == "_38") { // struct
+                            return recurse_block_search(ref current_block, next_guid, next_target, ref resulting_offset);
+                        } else if (next.Name == "_43") { // resource
+                            // we have to get the next block from the tagthing
+                            if (current_block.resource_file_refs.TryGetValue(resulting_offset, out tagdata_struct? next_resource) && next_resource.blocks.Count > 0){
+                                current_block = next_resource.blocks[0];
+                                resulting_offset = 0;
+                                return recurse_block_search(ref current_block, next_resource.GUID, next_target, ref resulting_offset);
+                            } else throw new Exception("path resource struct '" + next_struct + "' was a valid path but the resource does not exist");
+                        } else throw new Exception("path struct '" + next_struct + "' was not a valid struct type");
+                }}
+                // else we're in the place that we want to be, just return whatever shows up
+                XmlNode? target_node = current_struct.SelectSingleNode("[@Name = '" + target + "']");
+                if (target_node == null) throw new Exception("param '" + target + "' did not result any matches");
+                // update offset so we dont have to outside of this function
+                resulting_offset += Convert.ToUInt32(target_node.Attributes["Offset"].Value, 16);
+                return target_node;
+            }
         }
 
         public const int tag_header_size = 0x50;
