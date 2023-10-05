@@ -1833,7 +1833,7 @@ namespace Infinite_module_test{
                                             struct_data_block.Section = 2;
                                             struct_data_block.Offset = (ulong)output_tag_resource.Count(); 
                                             output_tag_resource.AddRange(data_resource);
-                                        } else if (probable_section == 4){ // actual resource data section
+                                        } else{ // if (probable_section == 4){ // actual resource data section
                                             // caculate padding
                                             int padding = output_actual_tag_resource.Count() % 4;
                                             for (int padi = 0; padi < padding; padi++) output_actual_tag_resource.Add(0);
@@ -1843,7 +1843,7 @@ namespace Infinite_module_test{
                                             struct_data_block.Offset = (ulong)output_actual_tag_resource.Count();
                                             output_actual_tag_resource.AddRange(data_resource);
                                         }
-                                        else throw new Exception("unkown int2 section index??");
+                                        //else throw new Exception("unkown int2 section index??");
 
                                         // then add our new data block to the list
                                         output_data_blocks.Add(struct_data_block);
