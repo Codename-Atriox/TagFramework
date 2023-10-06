@@ -609,10 +609,13 @@ namespace Infinite_module_test{
                         file_header.AssetChecksum = 0ul;
 
                         if (file.blocks == null || file.has_been_edited == false){ // block has no new data or hasn't been marked to repack, just toss their original datablocks back in
-                            foreach(block_header block in file.module_blocks){
-                                header_blocks.Add(block);
-                                if (!ishd1) file_bytes += (ulong)block.CompressedSize; 
-                        }}else{ // otherwise we want to compile the updated data for this block
+                            if (file.module_blocks.Count > 0){
+                                foreach (block_header block in file.module_blocks){
+                                    header_blocks.Add(block);
+                                    if (!ishd1) file_bytes += (ulong)block.CompressedSize;
+                            // its possible for the tag to have no blocks, but just have a data offset and compressed size, so we need to take that into account
+                            }} else if (!ishd1) file_bytes += (ulong)file.header.TotalCompressedSize;
+                        }else{ // otherwise we want to compile the updated data for this block
                             file_header.BlockCount = (ushort)file.blocks.Count;
                             // NOTE: this will overide resources who intentionally have no blocks allocated
                             // so to play it safe, we will set the using blocks flag just incase, this is not the proper solution however.
@@ -687,13 +690,18 @@ namespace Infinite_module_test{
                             // only write bytes if its not a hd1 file
                             if ((file.header.get_dataflags() & flag2_UseHd1) == 0){
 
-                                for (int b = 0; b < file.blocks.Count; b++)
-                                {
+                                for (int b = 0; b < file.blocks.Count; b++){
                                     // do some error checking to make sure the code worked exactly how we thought it would
-                                    if ((writer.BaseStream.Position - target_module.tagdata_base) != updated_header.get_dataoffset() + header_blocks[(int)updated_header.BlockIndex + b].CompressedOffset)
-                                        throw new Exception("offset fail! bad offset when writing tag data!!!");
-                                    if (file.blocks[b].bytes.Length != header_blocks[(int)updated_header.BlockIndex + b].CompressedSize)
-                                        throw new Exception("incorrect block size when writing tag data!");
+                                    if (updated_header.BlockCount > 0){
+                                        if ((writer.BaseStream.Position - target_module.tagdata_base) != updated_header.get_dataoffset() + header_blocks[(int)updated_header.BlockIndex + b].CompressedOffset)
+                                            throw new Exception("offset fail! bad offset when writing tag data!!!");
+                                        if (file.blocks[b].bytes.Length != header_blocks[(int)updated_header.BlockIndex + b].CompressedSize)
+                                            throw new Exception("incorrect block size when writing tag data!");
+                                    // different error checking depending on whether this tag has module header blocks
+                                    } else {
+                                        if ((writer.BaseStream.Position - target_module.tagdata_base) != updated_header.get_dataoffset())
+                                            throw new Exception("offset fail! bad offset when writing tag data!!!");
+                                    }
 
                                     writer.Write(file.blocks[b].bytes);
                                 }
@@ -1907,15 +1915,20 @@ namespace Infinite_module_test{
 
 
 
-
             // //////////////// //
             // TAG EDITING API //
             // ////////////// //
+            public void set_tagID(uint new_tagid){
+                byte[] tagid_bytes = BitConverter.GetBytes(new_tagid);
+                // the tagid is stored at 0x8 of the main tagstruct data
+                Array.Copy(tagid_bytes, 0, root.blocks[0].tag_data, 8, 4);
+            }
             /* PATH EXAMPLES 
                "super node parent mappings[0].parent_super_node_index" // param nested in array type (tagblock)
                "build identifier.structure importer version" // param nested in struct
             */
-            public tagdata_struct get_tagblock(thing current_block, string block_guid, string target){
+            public tagdata_struct get_tagblock(string target, thing? target_block = null, string block_guid = null){
+                thing current_block = apply_root_if_null(target_block, ref block_guid);
                 // we need to find the xml node so we can get the offset, then we can use that to get from the dictionary
                 ulong offset = 0;
                 recurse_block_search(ref current_block, block_guid, target, ref offset);
@@ -1926,9 +1939,130 @@ namespace Infinite_module_test{
                     return next_resource;
                 else throw new Exception("tagblock path '" + target + "' does not exist");
             }
+            
+            public void set_datablock(string path, byte[] new_bytes, thing? target_block = null, string block_guid = null){
+                thing current_block = apply_root_if_null(target_block, ref block_guid);
+                ulong block_offset = 0;
+                // error handling should be controlled outside of this?
+                XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
+                if (result.Name != "_42") throw new Exception("parameter path does not return a datablock parameter");
+                current_block.tag_resource_refs[block_offset] = new_bytes;
+            }
+            public byte[] get_datablock(string path, thing? target_block = null, string block_guid = null){
+                thing current_block = apply_root_if_null(target_block, ref block_guid);
+                ulong block_offset = 0;
+                // error handling should be controlled outside of this?
+                XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
+                if (result.Name != "_42") throw new Exception("parameter path does not return a datablock parameter");
+                return current_block.tag_resource_refs[block_offset];
+            }
 
+            
+            public void set_number(string path, string number, thing? target_block = null, string block_guid = null){
+                thing current_block = apply_root_if_null(target_block, ref block_guid);
 
+                ulong block_offset = 0;
+                // error handling should be controlled outside of this?
+                XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
+                int group_index = Convert.ToInt32(result.Name.Substring(1));
+                //determine what kind of number this is, and whether its compatible with our input
+                byte[] output;
+                switch (group_index){
+                    case 4: // signed byte
+                        output = new byte[1] { (byte)Convert.ToChar(number) };
+                        break;
+                    case 5: // signed short
+                        output = BitConverter.GetBytes(Convert.ToInt16(number));
+                        break;
+                    case 6: // signed short
+                        output = BitConverter.GetBytes(Convert.ToInt32(number));
+                        break;
+                    case 7: // signed short
+                        output = BitConverter.GetBytes(Convert.ToInt64(number));
+                        break;
+                    case 0x3C: // unsigned byte
+                        output = new byte[1] { Convert.ToByte(number) };
+                        break;
+                    case 0x3D: // unsigned short
+                        output = BitConverter.GetBytes(Convert.ToUInt16(number));
+                        break;
+                    case 0x3E: // unsigned short
+                        output = BitConverter.GetBytes(Convert.ToUInt32(number));
+                        break;
+                    case 0x3F: // unsigned short
+                        output = BitConverter.GetBytes(Convert.ToUInt64(number));
+                        break;
+                    case 0x14: // float
+                        output = BitConverter.GetBytes(Convert.ToSingle(number));
+                        break;
+                    case 0x15: // fraction float
+                        float single = Convert.ToSingle(number);
+                        if (single < 0.0f || single > 1.0f) throw new Exception("cannot assign value to fraction (must be between 0.0 & 1.0)");
+                        output = BitConverter.GetBytes(single);
+                        break;
+                    default: throw new Exception("target parameter is not a number!");
+                }
+                Array.Copy(output, 0, current_block.tag_data, (int)block_offset, output.Length);
+            }
+            public string get_number(string path, thing? target_block = null, string block_guid = null){
+                thing current_block = apply_root_if_null(target_block, ref block_guid);
+                ulong block_offset = 0;
+                // error handling should be controlled outside of this?
+                XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
+                int group_index = Convert.ToInt32(result.Name.Substring(1));
+                //determine what kind of number we're supposed to output
+                int param_length = param_group_sizes[group_index];
+                byte[] data = current_block.tag_data[(int)block_offset..((int)block_offset + param_length)];
+                switch (group_index){
+                    case 4: // signed byte
+                        return current_block.tag_data[block_offset].ToString();
+                    case 5: // signed short
+                        return BitConverter.ToInt16(data).ToString();
+                    case 6: // signed int
+                        return BitConverter.ToInt32(data).ToString();
+                    case 7: // signed long
+                        return BitConverter.ToInt64(data).ToString();
+                    case 0x3C: // unsigned byte
+                        return ((char)current_block.tag_data[block_offset]).ToString();
+                    case 0x3D: // unsigned short
+                        return BitConverter.ToUInt16(data).ToString();
+                    case 0x3E: // unsigned int
+                        return BitConverter.ToUInt32(data).ToString();
+                    case 0x3F: // unsigned long
+                        return BitConverter.ToUInt64(data).ToString();
+                    case 0x14: // float
+                    case 0x15: // fraction float
+                        return BitConverter.ToSingle(data).ToString();
+                    default: throw new Exception("target parameter is not a number!");
+                }
+            }
 
+            public void set_basic(string path, byte[] new_bytes, thing? target_block = null, string block_guid = null){
+                thing current_block = apply_root_if_null(target_block, ref block_guid);
+                ulong block_offset = 0;
+                // error handling should be controlled outside of this?
+                XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
+                int group_index = Convert.ToInt32(result.Name.Substring(1));
+                int param_length = param_group_sizes[group_index];
+                if (param_length != new_bytes.Length) throw new Exception("mismatching input byte array length");
+
+                Array.Copy(new_bytes, 0, current_block.tag_data, (int)block_offset, new_bytes.Length);
+            }
+            public byte[] get_basic(string path, thing? target_block = null, string block_guid = null){
+                thing current_block = apply_root_if_null(target_block, ref block_guid);
+                ulong block_offset = 0;
+                // error handling should be controlled outside of this?
+                XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
+                int group_index = Convert.ToInt32(result.Name.Substring(1));
+                int param_length = param_group_sizes[group_index];
+                return current_block.tag_data[(int)block_offset..((int)block_offset+param_length)];
+            }
+
+            private thing apply_root_if_null(thing? test, ref string block_guid){
+                if (test != null) return (thing)test;
+                block_guid = root.GUID;
+                return root.blocks[0];
+            }
             // take in an arbitrary parameter path and process it, and then return the details so other functions can handle it however they want
             // especially with the ability to return a different block, as we still need to beable to read the bytes
             private XmlNode recurse_block_search(ref thing current_block, string current_guid, string target, ref ulong resulting_offset){
@@ -1942,9 +2076,9 @@ namespace Infinite_module_test{
                     int brack_pos = target.IndexOf('[', StringComparison.Ordinal);
                     if (brack_pos > 0 && next_struct.Last() == ']') {
                         string array_name = next_struct.Substring(0, brack_pos);
-                        uint array_index = Convert.ToUInt32(next_struct.Substring(brack_pos+1, next_struct.Length - brack_pos+1));
+                        uint array_index = Convert.ToUInt32(next_struct.Substring(brack_pos+1, (next_struct.Length) - (brack_pos+2)));
                         // this could be either an array or a tagblock
-                        XmlNode? next = current_struct.SelectSingleNode("[@Name = '" + array_name + "']");
+                        XmlNode? next = current_struct.SelectSingleNode("//*[@Name = '" + array_name + "']");
                         if (next == null) throw new Exception("path array '" + array_name + "' did not result any matches");
                         uint offset = Convert.ToUInt32(next.Attributes["Offset"].Value, 16);
                         resulting_offset += offset;
@@ -1970,7 +2104,7 @@ namespace Infinite_module_test{
                         } else throw new Exception("path array '" + array_name + "' was not a valid array type");
 
                     } else { // process as struct
-                        XmlNode? next = current_struct.SelectSingleNode("[@Name = '" + next_struct + "']");
+                        XmlNode? next = current_struct.SelectSingleNode("//*[@Name = '" + next_struct + "']");
                         // it could be either a struct type or resource type
                         if (next == null) throw new Exception("path struct '" + next_struct + "' did not result any matches");
                         uint offset = Convert.ToUInt32(next.Attributes["Offset"].Value, 16);
@@ -1989,12 +2123,85 @@ namespace Infinite_module_test{
                         } else throw new Exception("path struct '" + next_struct + "' was not a valid struct type");
                 }}
                 // else we're in the place that we want to be, just return whatever shows up
-                XmlNode? target_node = current_struct.SelectSingleNode("[@Name = '" + target + "']");
+                XmlNode? target_node = current_struct.SelectSingleNode("//*[@Name = '" + target + "']");
                 if (target_node == null) throw new Exception("param '" + target + "' did not result any matches");
                 // update offset so we dont have to outside of this function
                 resulting_offset += Convert.ToUInt32(target_node.Attributes["Offset"].Value, 16);
                 return target_node;
             }
+
+            private static int[] param_group_sizes = new int[]{
+                32,  //  _0 // _field_string
+                256, //  _1 // _field_long_string
+                4,   //  _2 // _field_string_id
+                4,   //  _3 // 
+                1,   //  _4 // _field_char_integer
+                2,   //  _5 // _field_short_integer
+                4,   //  _6 // _field_long_integer
+                8,   //  _7 // _field_int64_integer
+                4,   //  _8 // _field_angle
+                4,   //  _9 // _field_tag
+                1,   //  _A // _field_char_enum
+                2,   //  _B // _field_short_enum
+                4,   //  _C // _field_long_enum
+                4,   //  _D // _field_long_flags
+                2,   //  _E // _field_word_flags
+                1,   //  _F // _field_byte_flags
+                4,   // _10 // _field_point_2d
+                4,   // _11 // _field_rectangle_2d
+                4,   // _12 // _field_rgb_color
+                4,   // _13 // _field_argb_color 
+                4,   // _14 // _field_real
+                4,   // _15 // _field_real_fraction
+                8,   // _16 // _field_real_point_2d
+                12,  // _17 // _field_real_point_3d
+                8,   // _18 // _field_real_vector_2d
+                12,  // _19 // _field_real_vector_3d
+                16,  // _1A // _field_real_quaternion
+                8,   // _1B // _field_real_euler_angles_2d
+                12,  // _1C // _field_real_euler_angles_3d
+                12,  // _1D // _field_real_plane_2d
+                16,  // _1E // _field_real_plane_3d
+                12,  // _1F // _field_real_rgb_color
+                16,  // _20 // _field_real_argb_color
+                4,   // _21 // _field_real_hsv_colo
+                4,   // _22 // _field_real_ahsv_color
+                4,   // _23 // _field_short_bounds
+                8,   // _24 // _field_angle_bounds
+                8,   // _25 // _field_real_bounds
+                8,   // _26 // _field_real_fraction_bounds
+                4,   // _27 // 
+                4,   // _28 //
+                4,   // _29 // _field_long_block_flags
+                4,   // _2A // _field_word_block_flags
+                4,   // _2B // _field_byte_block_flags
+                1,   // _2C // _field_char_block_index
+                1,   // _2D // _field_custom_char_block_index
+                2,   // _2E // _field_short_block_index
+                2,   // _2F // _field_custom_short_block_index
+                4,   // _30 // _field_long_block_index
+                4,   // _31 // _field_custom_long_block_index
+                4,   // _32 // 
+                4,   // _33 // 
+                0,   // _34 // _field_pad 
+                0,   // _35 // _field_skip
+                0,   // _36 // _field_explanation
+                0,   // _37 // _field_custom
+                0,   // _38 // _field_struct 
+                0,   // _39 // _field_array
+                4,   // _3A // 
+                0,   // _3B // end of struct
+                1,   // _3C // _field_byte_integer
+                2,   // _3D // _field_word_integer
+                4,   // _3E // _field_dword_integer
+                8,   // _3F // _field_qword_integer
+                20,  // _40 // _field_block_v2
+                28,  // _41 // _field_reference_v2
+                24,  // _42 // _field_data_v2
+                16,  // _43 // tag_resource
+                4,   // _44 // UNKNOWN
+                4    // _45 // UNKNOWN
+            };
         }
 
         public const int tag_header_size = 0x50;
