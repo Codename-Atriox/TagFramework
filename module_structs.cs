@@ -24,6 +24,7 @@ using System.Collections.Generic;
 using static System.Reflection.Metadata.BlobBuilder;
 using System.Diagnostics.SymbolStore;
 using System.Net.NetworkInformation;
+using System.Numerics;
 
 // TODO:
 // 1. separate loading into its own class, so that all data used is easily disposable
@@ -1964,7 +1965,7 @@ namespace Infinite_module_test{
                 ulong block_offset = 0;
                 // error handling should be controlled outside of this?
                 XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
-                int group_index = Convert.ToInt32(result.Name.Substring(1));
+                int group_index = Convert.ToInt32(result.Name.Substring(1), 16);
                 //determine what kind of number this is, and whether its compatible with our input
                 byte[] output;
                 switch (group_index){
@@ -2009,7 +2010,7 @@ namespace Infinite_module_test{
                 ulong block_offset = 0;
                 // error handling should be controlled outside of this?
                 XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
-                int group_index = Convert.ToInt32(result.Name.Substring(1));
+                int group_index = Convert.ToInt32(result.Name.Substring(1), 16);
                 //determine what kind of number we're supposed to output
                 int param_length = param_group_sizes[group_index];
                 byte[] data = current_block.tag_data[(int)block_offset..((int)block_offset + param_length)];
@@ -2036,13 +2037,26 @@ namespace Infinite_module_test{
                     default: throw new Exception("target parameter is not a number!");
                 }
             }
+            public Vector3 get_float3(string path, thing? target_block = null, string block_guid = null){
+                thing current_block = apply_root_if_null(target_block, ref block_guid);
+                ulong block_offset = 0;
+                // error handling should be controlled outside of this?
+                XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
+                int group_index = Convert.ToInt32(result.Name.Substring(1), 16);
+                int param_length = param_group_sizes[group_index];
+                if (param_length != 12) throw new Exception("param did not have the expected size! we should actually be checking the type not the length!!!!");
+                float f1 = BitConverter.ToSingle(current_block.tag_data[(int)block_offset..((int)block_offset + 4)]);
+                float f2 = BitConverter.ToSingle(current_block.tag_data[(int)(block_offset+4)..((int)block_offset + 8)]);
+                float f3 = BitConverter.ToSingle(current_block.tag_data[(int)(block_offset+8)..((int)block_offset + 12)]);
+                return new Vector3(f1, f2, f3);
+            }
 
             public void set_basic(string path, byte[] new_bytes, thing? target_block = null, string block_guid = null){
                 thing current_block = apply_root_if_null(target_block, ref block_guid);
                 ulong block_offset = 0;
                 // error handling should be controlled outside of this?
                 XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
-                int group_index = Convert.ToInt32(result.Name.Substring(1));
+                int group_index = Convert.ToInt32(result.Name.Substring(1), 16);
                 int param_length = param_group_sizes[group_index];
                 if (param_length != new_bytes.Length) throw new Exception("mismatching input byte array length");
 
@@ -2053,7 +2067,7 @@ namespace Infinite_module_test{
                 ulong block_offset = 0;
                 // error handling should be controlled outside of this?
                 XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
-                int group_index = Convert.ToInt32(result.Name.Substring(1));
+                int group_index = Convert.ToInt32(result.Name.Substring(1), 16);
                 int param_length = param_group_sizes[group_index];
                 return current_block.tag_data[(int)block_offset..((int)block_offset+param_length)];
             }
