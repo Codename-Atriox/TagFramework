@@ -1139,9 +1139,9 @@ namespace Infinite_module_test{
                                         XmlAttribute attr = reference_xml.CreateAttribute("UNK0x12");
                                         target_node.Attributes.Append(attr);
                                 }} else if (struc.Type == 2) {
-                                    if (struc.Unk_0x12 != 0) throw new Exception("unexpected unk type for non-chunked resource struct");
+                                    //if (struc.Unk_0x12 != 0) throw new Exception("unexpected unk type for non-chunked resource struct");
                                 } else if (struc.Type == 3) {
-                                    if (struc.Unk_0x12 != 1) throw new Exception("unexpected unk type for chunked resource struct");
+                                    //if (struc.Unk_0x12 != 1) throw new Exception("unexpected unk type for chunked resource struct");
                                 } else {
                                     throw new Exception("unexpected struct type!! (this needs to be investigated)");
                                 }
