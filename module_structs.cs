@@ -843,7 +843,7 @@ namespace Infinite_module_test{
         //
         static Dictionary<uint, string> stringIDs = new Dictionary<uint, string>();
         static Dictionary<uint, string> tagnames = new Dictionary<uint, string>();
-        const string stringIDs_path = "files\\outtest9.txt";
+        const string stringIDs_path = "files\\outtest10.txt";
         const string tagnames_path = "files\\tagnames.txt";
         static string? plugin_path = "C:\\Users\\Joe bingle\\Downloads\\plugins";
         public static void init_strings(){
