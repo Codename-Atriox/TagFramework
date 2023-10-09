@@ -2037,6 +2037,20 @@ namespace Infinite_module_test{
                     default: throw new Exception("target parameter is not a number!");
                 }
             }
+            
+            public void set_float3(string path, Vector3 value, thing? target_block = null, string block_guid = null){
+                thing current_block = apply_root_if_null(target_block, ref block_guid);
+                ulong block_offset = 0;
+                // error handling should be controlled outside of this?
+                XmlNode result = recurse_block_search(ref current_block, block_guid, path, ref block_offset);
+                int group_index = Convert.ToInt32(result.Name.Substring(1), 16);
+                int param_length = param_group_sizes[group_index];
+                if (param_length != 12) throw new Exception("param did not have the expected size! we should actually be checking the type not the length!!!!");
+                
+                Array.Copy(BitConverter.GetBytes(value.X), 0, current_block.tag_data, (int)block_offset,   4);
+                Array.Copy(BitConverter.GetBytes(value.Y), 0, current_block.tag_data, (int)block_offset+4, 4);
+                Array.Copy(BitConverter.GetBytes(value.Z), 0, current_block.tag_data, (int)block_offset+8, 4);
+            }
             public Vector3 get_float3(string path, thing? target_block = null, string block_guid = null){
                 thing current_block = apply_root_if_null(target_block, ref block_guid);
                 ulong block_offset = 0;
@@ -2092,7 +2106,7 @@ namespace Infinite_module_test{
                         string array_name = next_struct.Substring(0, brack_pos);
                         uint array_index = Convert.ToUInt32(next_struct.Substring(brack_pos+1, (next_struct.Length) - (brack_pos+2)));
                         // this could be either an array or a tagblock
-                        XmlNode? next = current_struct.SelectSingleNode("//*[@Name = '" + array_name + "']");
+                        XmlNode? next = current_struct.SelectSingleNode("*[@Name = '" + array_name + "']");
                         if (next == null) throw new Exception("path array '" + array_name + "' did not result any matches");
                         uint offset = Convert.ToUInt32(next.Attributes["Offset"].Value, 16);
                         resulting_offset += offset;
@@ -2118,7 +2132,7 @@ namespace Infinite_module_test{
                         } else throw new Exception("path array '" + array_name + "' was not a valid array type");
 
                     } else { // process as struct
-                        XmlNode? next = current_struct.SelectSingleNode("//*[@Name = '" + next_struct + "']");
+                        XmlNode? next = current_struct.SelectSingleNode("*[@Name = '" + next_struct + "']");
                         // it could be either a struct type or resource type
                         if (next == null) throw new Exception("path struct '" + next_struct + "' did not result any matches");
                         uint offset = Convert.ToUInt32(next.Attributes["Offset"].Value, 16);
@@ -2137,7 +2151,7 @@ namespace Infinite_module_test{
                         } else throw new Exception("path struct '" + next_struct + "' was not a valid struct type");
                 }}
                 // else we're in the place that we want to be, just return whatever shows up
-                XmlNode? target_node = current_struct.SelectSingleNode("//*[@Name = '" + target + "']");
+                XmlNode? target_node = current_struct.SelectSingleNode("*[@Name = '" + target + "']");
                 if (target_node == null) throw new Exception("param '" + target + "' did not result any matches");
                 // update offset so we dont have to outside of this function
                 resulting_offset += Convert.ToUInt32(target_node.Attributes["Offset"].Value, 16);
