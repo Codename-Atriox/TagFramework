@@ -168,6 +168,10 @@ namespace Infinite_module_test{
 
                     // init group if it hasn't been already
                     string group = groupID_str(tag.ClassId);
+                    if (group == "mat " || group == "mat")
+                    {
+
+                    }
                     if (!file_groups.ContainsKey(group))
                         file_groups.Add(group, new List<indexed_module_file>());
                     // get tagname and add to directory
@@ -306,7 +310,7 @@ namespace Infinite_module_test{
                 result += (char)((groupid >> 16) & 0xFF);
                 result += (char)((groupid >> 8) & 0xFF);
                 result += (char)(groupid & 0xFF);
-                return result.Trim().Replace('*', '_');
+                return result.Replace('*', '_');
             }
             private T read_and_convert_to<T>(int read_length){
                 byte[] bytes = new byte[read_length];
@@ -890,7 +894,7 @@ namespace Infinite_module_test{
                 string result = "";
                 if (paths.Length > 1)
                     result += paths[paths.Length - 2];
-                return result + paths.Last().Split(".").First();
+                return result + "\\" + paths.Last().Split(".").First();
             }
             else return reverse_uint(tagid).ToString("X8");
             // we want to get rid of the dumb names for dumb tags, so filter out basic types like
