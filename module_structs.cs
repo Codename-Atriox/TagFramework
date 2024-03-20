@@ -220,7 +220,7 @@ namespace Infinite_module_test{
                 long data_Address = tagdata_base + unpacked.header.get_dataoffset();
 
                 // test whether this tag is HD_1 (through flags & backup address offset) and match it with our imaginary value
-                if ((unpacked.header.get_dataflags() & flag2_UseHd1) == 1 || data_Address >= module_reader.Length)
+                if ((unpacked.header.get_dataflags() & (flag2_UseHd1|flag2_UseHd2)) != 0 || data_Address >= module_reader.Length)
                     return; // skip adding data blocks basically // this only happens for bitmaps i think, so we shouldn't have any issues with this??
 
                 if (reading_separate_blocks){
@@ -602,7 +602,7 @@ namespace Infinite_module_test{
                         unpacked_module_file file = files[i];
                         module_file file_header = file.header;
                         file_header.BlockIndex = (uint)header_blocks.Count;
-                        bool ishd1 = ((file_header.get_dataflags() & flag2_UseHd1) == 1);
+                        bool ishd1 = ((file_header.get_dataflags() & (flag2_UseHd1|flag2_UseHd2)) != 0);
                         // check to see if this is a hd1 resource, if so then set the addres to -1 basically & do not allocate any room
                         if (ishd1) file_header.DataOffset_and_flags = (file_header.DataOffset_and_flags & 0x00ff000000000000) | 0x0000FFFFFFFFFFFF;
                         // otherwise just read our regular offset
@@ -693,7 +693,7 @@ namespace Infinite_module_test{
                             target_module.unpack_module_file(file);
                             if (file.blocks == null) throw new Exception("failed to unpack tag's blocks!");
                             // only write bytes if its not a hd1 file
-                            if ((file.header.get_dataflags() & flag2_UseHd1) == 0){
+                            if ((file.header.get_dataflags() & (flag2_UseHd1|flag2_UseHd2)) == 0){
 
                                 for (int b = 0; b < file.blocks.Count; b++){
                                     // do some error checking to make sure the code worked exactly how we thought it would
@@ -810,6 +810,7 @@ namespace Infinite_module_test{
         const byte flag_UseRawfile     = 0b00000100; // is a raw file, meaning it has no tag header
         // data offset flags
         const byte flag2_UseHd1 = 0b00000001; // if this is checked, then its likely that the tag resides in the hd1 file (if that exists)
+        const byte flag2_UseHd2 = 0b00000010; // same as hd1????
 
         public const int block_header_size = 0x14;
         [StructLayout(LayoutKind.Explicit, Size = block_header_size)]
