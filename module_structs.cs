@@ -809,6 +809,7 @@ namespace Infinite_module_test{
         const byte flag_UseBlocks      = 0b00000010; // has blocks, which means to read the data across several data blocks, otherwise read straight from data offset
         const byte flag_UseRawfile     = 0b00000100; // is a raw file, meaning it has no tag header
         // data offset flags
+        // NOTE: THESE ARE LIKELY INDEXES, NOT FLAGS, MUST UPDATE SYSTEM TO USE MODULE INDEX RATHER THAN FLAGS!!!!
         const byte flag2_UseHd1 = 0b00000001; // if this is checked, then its likely that the tag resides in the hd1 file (if that exists)
         const byte flag2_UseHd2 = 0b00000010; // same as hd1????
 
